@@ -36,7 +36,7 @@
             </div>
             <div class="player-lobby">
                 <h3>CONNECTED PLAYERS (<span id="player-count">0</span>)</h3>
-                <table><thead><tr><th>Name</th><th>Status</th><th>Coordinates</th><th>Action</th></tr></thead><tbody id="player-list-body"></tbody></table>
+                <table><thead><tr><th>Name</th><th>Status</th><th>Relative Position</th><th>Action</th></tr></thead><tbody id="player-list-body"></tbody></table>
             </div>
         </div>
 
@@ -51,6 +51,7 @@
                 </div>
                 <div id="admin-map-container" style="display: none; text-align: center;">
                     <canvas id="admin-canvas" width="800" height="400" style="background: #051105; border: 3px solid #00ff00; border-radius: 10px; width:100%;"></canvas>
+                    <p id="map-scale-info" style="color:#00ff00; font-family:monospace; font-size:0.8rem; margin-top:5px;">DGPS Radar Active</p>
                 </div>
             </div>
 
@@ -67,22 +68,17 @@
             <h1>PLAYER JOIN</h1>
             <input type="text" id="playerNameInput" placeholder="Your Name...">
             <button class="menu-btn" onclick="joinGame()">JOIN LOBBY</button>
-            <p style="margin-top:20px; color:#888;">Note: Keep phone relatively flat while walking for accurate compass readings.</p>
         </div>
         <div id="player-game" style="display:none;">
             <div id="role-reveal-box"><h2 id="role-text"></h2></div>
             <div id="player-status-indicator"></div><hr>
             
-            <div class="radar-container" style="background:#111; padding:15px; border-radius:10px; border:2px solid #333;">
-                <h3 style="color: #66fcf1; margin-top:0;">👣 MOTION RADAR</h3>
-                <p id="radar-status-text" style="color: #00ff00; font-size: 1.2rem; font-weight:bold; margin-top:10px;">Pos: (0.0m, 0.0m) | Hdg: 0°</p>
+            <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
+                <h3 style="color: #66fcf1;">🛰️ HIGH-ACCURACY DGPS</h3>
+                <p id="radar-status-text" style="color: #00ff00; font-size: 1.2rem; font-weight:bold; margin-top:10px;">Calibrating...</p>
                 
-                <div style="margin-top:15px; background:#000; padding:10px; border-radius:5px;">
-                    <label style="color:#aaa; font-size:0.9rem;">Stride Length (Meters):</label>
-                    <input type="number" id="stride-length" value="0.7" step="0.1" style="width: 80px; display:inline-block; margin-left:10px;">
-                </div>
-
-                <button onclick="calibratePosition()" style="background:#45a29e; color:#111; padding:10px; width:100%; margin-top:15px; font-weight:bold; border-radius:5px; border:none;">🎯 CALIBRATE AT ORIGIN</button>
+                <button onclick="calibratePosition()" style="background:#45a29e; color:#111; padding:10px; width:100%; margin-top:15px; font-weight:bold; border-radius:5px; border:none;">🎯 SYNC TO NEAREST BEACON</button>
+                <p style="color:#888; font-size:0.8rem; margin-top:5px;">Stand next to the Host Computer or any Tablet and click to instantly force-snap calibration.</p>
             </div><hr>
             
             <div class="player-actions">
@@ -95,17 +91,18 @@
     <!-- 3. TABLET VIEW -->
     <div id="tablet-view" class="role-section" style="display:none;">
         <div id="tablet-setup">
-            <h2>Assign Room & Coordinates:</h2>
+            <h2>Place and Calibrate Tablet:</h2>
             <div style="background:#111; padding:20px; margin-bottom:20px; border-radius:10px; text-align:left;">
-                <p style="color:#888;">Look at a Player's phone while they stand exactly where this tablet is, and enter those X and Y values below to lock its position in space.</p>
-                <input type="number" id="tabletXInput" placeholder="X coordinate (e.g. 5.2)" step="0.1">
-                <input type="number" id="tabletYInput" placeholder="Y coordinate (e.g. -2.1)" step="0.1">
+                <p style="color:#888; margin-bottom: 10px;">Hold this tablet in the exact physical spot you want the task station to be, and click Calibrate below.</p>
+                <button onclick="calibrateTabletAnchor()" class="start-game-btn" style="margin: 0; padding: 15px; background: #45a29e; color: #111;">🎯 CALIBRATE TABLET POSITION</button>
             </div>
-            <div id="tablet-room-selection" class="room-grid"></div>
+            <div id="tablet-room-selection" class="room-grid" style="display: none;">
+                <!-- Room selection displays after coordinates are calibrated -->
+            </div>
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
-            <p id="calibration-status" style="color: #ffff33;">🛰️ Station Locked. Waiting for players...</p>
+            <p id="calibration-status" style="color: #00ff00;">🛰️ Station Online. Tracking nearby players...</p>
             <div id="active-tasks-container"></div>
         </div>
     </div>
@@ -125,6 +122,8 @@
     <script src="app.js"></script>
     <script>
         let globalGameState = {};
+        let localTabletCoords = null;
+
         db.ref().on('value', snap => {
             globalGameState = snap.val() || {};
             handleMeetingUI(globalGameState);
@@ -139,8 +138,32 @@
             if (viewId === 'tablet-view') initTabletSelection();
         }
 
+        // --- HOST INITIALIZATION ---
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
+            
+            // Set Host Base Coordinates (True Origin)
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const baseLat = position.coords.latitude;
+                    const baseLng = position.coords.longitude;
+                    
+                    db.ref('baseCoords').set({ lat: baseLat, lng: baseLng });
+                    
+                    // Host continues tracking its own GPS to calculate the active atmospheric drift
+                    navigator.geolocation.watchPosition(livePos => {
+                        const driftLat = livePos.coords.latitude - baseLat;
+                        const driftLng = livePos.coords.longitude - baseLng;
+                        
+                        // Publish live drift adjustments
+                        db.ref('gpsDrift').set({ lat: driftLat, lng: driftLng });
+                    }, null, { enableHighAccuracy: true, maximumAge: 0 });
+
+                }, err => {
+                    db.ref('baseCoords').set({ lat: 37.7749, lng: -122.4194 });
+                }, { enableHighAccuracy: true });
+            }
+            
             db.ref('gameState').on('value', snap => {
                 if (snap.val() === 'playing') {
                     document.getElementById('host-lobby-container').style.display = 'none';
@@ -152,7 +175,7 @@
             });
         }
 
-        // --- ADMIN MAP (Dead Reckoning Version) ---
+        // --- ADMIN MAP RENDERING LOOP ---
         let adminMapActive = false;
         let animationFrameId;
 
@@ -208,7 +231,7 @@
             maxDist = maxDist * 1.2; 
             const scale = (Math.min(W, H) / 2) / maxDist; 
 
-            // Grid
+            // Grid Layout
             ctx.strokeStyle = "rgba(0, 255, 0, 0.1)";
             ctx.lineWidth = 1;
             const gridSpacingPixels = 5 * scale;
@@ -221,12 +244,12 @@
                 }
             }
             
-            // Host
+            // Host Origin Icon
             ctx.fillStyle = "#ffff33";
             ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
             ctx.font = "12px monospace"; ctx.fillText("HOST(0,0)", cx + 8, cy - 4);
             
-            // Stations
+            // Tablets
             for (let room in stations) {
                 if (stations[room].coords) {
                     const sx = cx + (stations[room].coords.x * scale);
@@ -237,7 +260,7 @@
                 }
             }
             
-            // Players
+            // Active Players
             for (let id in players) {
                 const p = players[id];
                 if (p.coords && p.status === 'alive') {
@@ -254,7 +277,7 @@
             }
         }
 
-        // --- PLAYER INIT ---
+        // --- PLAYER UI ---
         function initPlayerUI() {
             db.ref(`players/${myId}`).on('value', snap => {
                 const data = snap.val();
@@ -270,7 +293,33 @@
             });
         }
 
-        // --- TABLET INIT ---
+        // --- TABLET UI AND CALIBRATION ENGINE ---
+        function calibrateTabletAnchor() {
+            db.ref().once('value', baseSnap => {
+                const data = baseSnap.val() || {};
+                const base = data.baseCoords;
+                const drift = data.gpsDrift || { lat: 0, lng: 0 };
+
+                if (!base) {
+                    alert("Host is not set up! Turn on Host computer first.");
+                    return;
+                }
+
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(position => {
+                        // Apply DGPS correction instantly to tablet configuration coordinates
+                        const correctedLat = position.coords.latitude - drift.lat;
+                        const correctedLng = position.coords.longitude - drift.lng;
+
+                        localTabletCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
+                        
+                        // Reveal room selector once coordinates are captured
+                        document.getElementById('tablet-room-selection').style.display = 'grid';
+                    }, err => alert("Calibration Error: " + err.message), { enableHighAccuracy: true });
+                }
+            });
+        }
+
         function initTabletSelection() {
             const div = document.getElementById('tablet-room-selection');
             ROOMS.forEach(room => {
@@ -279,16 +328,13 @@
                 b.style.margin = "5px";
                 b.innerText = room;
                 b.onclick = () => {
-                    const tX = parseFloat(document.getElementById('tabletXInput').value);
-                    const tY = parseFloat(document.getElementById('tabletYInput').value);
-                    
-                    if(isNaN(tX) || isNaN(tY)) return alert("Please enter valid X and Y coordinates before selecting a room!");
+                    if(!localTabletCoords) return alert("Calibrate position coordinates first!");
 
                     document.getElementById('tablet-setup').style.display = 'none';
                     document.getElementById('tablet-active').style.display = 'block';
                     document.getElementById('tablet-room-name').innerText = room.toUpperCase();
                     
-                    db.ref(`stations/${room}/coords`).set({ x: tX, y: tY }).then(() => {
+                    db.ref(`stations/${room}/coords`).set(localTabletCoords).then(() => {
                         monitorRoomTasks(room);
                     });
                 };

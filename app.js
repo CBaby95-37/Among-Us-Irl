@@ -25,138 +25,114 @@ const TASK_POOL = [
     { name: "Empty Trash", icon: "🗑️" }, { name: "Divert Power", icon: "⚡" }
 ];
 
-const KILL_LIMIT = 2.0; 
-const TASK_LIMIT = 3.0; 
-let STEP_LENGTH = 0.7; 
+const KILL_LIMIT = 1.524; // 5 feet
+const TASK_LIMIT = 3.0;   // 10 feet
 
-// --- 3. COMPATIBLE ABSOLUTE RADAR ENGINE ---
-let myCurrentX = 0;
-let myCurrentY = 0;
-let currentHeading = 0;
-let isTracking = false;
+// --- 3. DGPS MATHEMATICS ---
 
-let stepCooldown = false;
-let isTurning = false;
-let turnTimer = null;
-let lastHeading = 0;
+// Converts Latitude/Longitude to relative meters (X, Y) from the Host Computer (0,0)
+function getRelativeXY(lat, lon, baseLat, baseLon) {
+    const latRad = baseLat * Math.PI / 180;
+    const metersPerLatDegree = 111139; 
+    const metersPerLonDegree = 111139 * Math.cos(latRad);
 
-function startDeadReckoning() {
-    isTracking = true;
+    const x = (lon - baseLon) * metersPerLonDegree;
+    const y = (lat - baseLat) * metersPerLatDegree;
     
-    // Request permission for iOS 13+ devices
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(permissionState => {
-            if (permissionState === 'granted') attachSensors();
-            else alert("Compass and Motion permissions are required!");
-        }).catch(console.error);
-    } else {
-        attachSensors();
-    }
-}
-
-function attachSensors() {
-    // 1. Unified Cross-Platform Absolute Compass
-    if ('ondeviceorientationabsolute' in window) {
-        // Android/Chrome absolute event
-        window.addEventListener("deviceorientationabsolute", handleCompassInput, true);
-    } else if ('ondeviceorientation' in window) {
-        // iOS/Safari standard event
-        window.addEventListener("deviceorientation", handleCompassInput, true);
-    }
-
-    // 2. Accelerometer (Pedometer Step counter)
-    window.addEventListener('devicemotion', (event) => {
-        let accelZ = 0;
-        if (event.acceleration && event.acceleration.z !== null) {
-            accelZ = event.acceleration.z;
-        } else if (event.accelerationIncludingGravity) {
-            accelZ = event.accelerationIncludingGravity.z - 9.81;
-        }
-        
-        if (accelZ === null) return;
-
-        // Peak step detection
-        if (Math.abs(accelZ) > 2.5 && !stepCooldown && !isTurning) {
-            stepCooldown = true;
-            registerStep();
-            setTimeout(() => { stepCooldown = false; }, 500); 
-        }
-    });
-
-    // Firebase position sync loop (1 second intervals)
-    setInterval(() => {
-        if(isTracking) {
-            db.ref(`players/${myId}/coords`).set({
-                x: myCurrentX,
-                y: myCurrentY,
-                timestamp: Date.now()
-            });
-        }
-    }, 1000);
-}
-
-// Normalized Compass Translation
-function handleCompassInput(event) {
-    let heading = 0;
-    
-    if (event.webkitCompassHeading) {
-        // iOS Native Absolute Compass
-        heading = event.webkitCompassHeading;
-    } else if (event.alpha !== null) {
-        // Android Absolute Alpha (relative to magnetic North on orientationabsolute)
-        heading = 360 - event.alpha;
-    }
-
-    currentHeading = heading;
-
-    // Detect fast rotational shifts to pause step tracking
-    if (Math.abs(heading - lastHeading) > 12) {
-        isTurning = true;
-        clearTimeout(turnTimer);
-        turnTimer = setTimeout(() => { isTurning = false; }, 500);
-    }
-    lastHeading = heading;
-}
-
-function registerStep() {
-    const strideInput = document.getElementById('stride-length');
-    if (strideInput) STEP_LENGTH = parseFloat(strideInput.value);
-
-    // Coordinate Vector mapping (radians)
-    const headingRad = currentHeading * (Math.PI / 180);
-    const dx = STEP_LENGTH * Math.sin(headingRad);
-    const dy = STEP_LENGTH * Math.cos(headingRad);
-    
-    myCurrentX += dx;
-    myCurrentY += dy;
-    
-    const radarStatus = document.getElementById('radar-status-text');
-    if(radarStatus) {
-        radarStatus.innerText = `Pos: (${myCurrentX.toFixed(1)}m, ${myCurrentY.toFixed(1)}m) | Hdg: ${Math.round(currentHeading)}°`;
-    }
-}
-
-function calibratePosition() {
-    myCurrentX = 0;
-    myCurrentY = 0;
-    
-    const radarStatus = document.getElementById('radar-status-text');
-    if(radarStatus) radarStatus.innerText = `Pos: (0.0m, 0.0m) | Hdg: ${Math.round(currentHeading)}°`;
-    alert("Coordinates Reset! Both devices are now aligned at (0,0).");
+    return { x: x, y: y };
 }
 
 function getPythagoreanDistance(x1, y1, x2, y2) {
     return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
 }
 
-// --- 4. PLAYER GAMEPLAY CONTROLS ---
+// --- 4. PLAYER SENSOR WITH ACTIVE DGPS CORRECTION ---
+let gpsWatcherId = null;
+
+function startLocationTracking() {
+    // Listen to BOTH base coordinates and live drift corrections
+    db.ref().on('value', snap => {
+        const data = snap.val() || {};
+        const base = data.baseCoords;
+        const drift = data.gpsDrift || { lat: 0, lng: 0 }; // Current atmospheric/indoor drift
+
+        if (!base) return;
+
+        if (gpsWatcherId !== null && navigator.geolocation) {
+            navigator.geolocation.clearWatch(gpsWatcherId);
+        }
+
+        if (navigator.geolocation) {
+            gpsWatcherId = navigator.geolocation.watchPosition(position => {
+                // Apply the DGPS correction factor
+                const correctedLat = position.coords.latitude - drift.lat;
+                const correctedLng = position.coords.longitude - drift.lng;
+
+                const relativeCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
+                
+                db.ref(`players/${myId}/coords`).set({
+                    x: relativeCoords.x,
+                    y: relativeCoords.y,
+                    timestamp: Date.now()
+                });
+
+                const statusText = document.getElementById('radar-status-text');
+                if (statusText) {
+                    statusText.innerText = `Corrected Pos: (${relativeCoords.x.toFixed(1)}m, ${relativeCoords.y.toFixed(1)}m)`;
+                }
+            }, err => {
+                console.error("GPS Watcher Error: ", err.message);
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 5000
+            });
+        }
+    });
+}
+
+// Manual Beacon Calibration: Snaps player coordinates directly to the nearest active beacon/host
+function calibratePosition() {
+    db.ref().once('value', snap => {
+        const data = snap.val() || {};
+        const stations = data.stations || {};
+        
+        let nearestBeacon = "Host";
+        let minDist = getPythagoreanDistance(0, 0, myCurrentX, myCurrentY); // distance to host
+
+        // Check if player is closer to a stationary tablet beacon
+        for (let room in stations) {
+            const s = stations[room];
+            if (s.coords) {
+                const dist = getPythagoreanDistance(s.coords.x, s.coords.y, myCurrentX, myCurrentY);
+                if (dist < minDist) {
+                    minDist = dist;
+                    nearestBeacon = room;
+                }
+            }
+        }
+
+        if (nearestBeacon === "Host") {
+            // Force reset coordinates to exactly 0,0
+            db.ref(`players/${myId}/coords`).set({ x: 0, y: 0, timestamp: Date.now() });
+            alert("Calibration Complete! Synced position directly to Host Computer (0,0).");
+        } else {
+            // Force snap coordinates to match the tablet coordinates
+            const sCoords = stations[nearestBeacon].coords;
+            db.ref(`players/${myId}/coords`).set({ x: sCoords.x, y: sCoords.y, timestamp: Date.now() });
+            alert(`Calibration Complete! Synced position directly to ${nearestBeacon} Tablet Beacon.`);
+        }
+    });
+}
+
+// --- 5. PLAYER GAMEPLAY CONTROLS ---
 function joinGame() {
     const nameInput = document.getElementById('playerNameInput');
     const name = nameInput ? nameInput.value.trim() : "Player";
     if (!name) return alert("Please enter a name!");
     
     db.ref(`players/${myId}`).set({ name: name, status: 'alive', role: 'crewmate' });
-    startDeadReckoning();
+    startLocationTracking();
 }
 
 function startKillProximityCheck() {
@@ -167,12 +143,14 @@ function startKillProximityCheck() {
         if (!me || me.role !== 'impostor' || me.status !== 'alive') return;
         
         let targetNearby = false;
-        for (let id in players) {
-            if (id !== myId && players[id].status === 'alive' && players[id].coords) {
-                const dist = getPythagoreanDistance(myCurrentX, myCurrentY, players[id].coords.x, players[id].coords.y);
-                if (dist <= KILL_LIMIT) {
-                    targetNearby = true;
-                    break;
+        if (me.coords) {
+            for (let id in players) {
+                if (id !== myId && players[id].status === 'alive' && players[id].coords) {
+                    const dist = getPythagoreanDistance(me.coords.x, me.coords.y, players[id].coords.x, players[id].coords.y);
+                    if (dist <= KILL_LIMIT) {
+                        targetNearby = true;
+                        break;
+                    }
                 }
             }
         }
@@ -186,11 +164,11 @@ function tryKill() {
     db.ref('players').once('value', snap => {
         const allPlayers = snap.val();
         const me = allPlayers[myId];
-        if (me.role !== 'impostor' || me.status !== 'alive') return;
+        if (me.role !== 'impostor' || me.status !== 'alive' || !me.coords) return;
 
         for (let id in allPlayers) {
             if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].coords) {
-                const dist = getPythagoreanDistance(myCurrentX, myCurrentY, allPlayers[id].coords.x, allPlayers[id].coords.y);
+                const dist = getPythagoreanDistance(me.coords.x, me.coords.y, allPlayers[id].coords.x, allPlayers[id].coords.y);
                 if (dist <= KILL_LIMIT) {
                     db.ref(`players/${id}/status`).set('ghost');
                     alert(`Eliminated ${allPlayers[id].name}!`);
@@ -201,7 +179,7 @@ function tryKill() {
     });
 }
 
-// --- 5. VOTING & MEETING SYSTEM ---
+// --- 6. VOTING SYSTEM ---
 function callMeeting() {
     db.ref('votes').remove();
     db.ref('ejectionMessage').remove();
@@ -234,7 +212,9 @@ function tallyVotes() {
     });
 }
 
-// --- 6. HOST DATABASE INTERFACES ---
+// --- 7. HOST DATABASE SYSTEM & DGPS WATCHER ---
+let hostGpsWatchId = null;
+
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
     const tableBody = document.getElementById('player-list-body');
@@ -247,7 +227,7 @@ db.ref('players').on('value', snap => {
             tableBody.innerHTML += `<tr>
                 <td>${p.name}</td>
                 <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
-                <td>${p.coords ? `${p.coords.x.toFixed(1)}, ${p.coords.y.toFixed(1)}` : "No Data"}</td>
+                <td>${p.coords ? `${p.coords.x.toFixed(1)}m, ${p.coords.y.toFixed(1)}m` : "No Data"}</td>
                 <td><button onclick="kickPlayer('${id}')">KICK</button></td>
             </tr>`;
         }
@@ -301,7 +281,7 @@ function kickPlayer(id) { if(confirm("Kick?")) db.ref(`players/${id}`).remove();
 function resetGame() {
     if(confirm("Reset game?")) {
         db.ref().update({
-            gameState: 'lobby', meeting: false, cameras: null, votes: null, ejectionMessage: null, stations: null
+            gameState: 'lobby', meeting: false, cameras: null, votes: null, ejectionMessage: null, stations: null, gpsDrift: null
         });
         db.ref('players').once('value', snap => {
             const p = snap.val();
@@ -342,7 +322,7 @@ function updateHostDashboard(players) {
     progress.style.width = (total === 0 ? 0 : (done / total) * 100) + "%";
 }
 
-// --- 7. TABLET PROXIMITY ---
+// --- 8. TABLET PROXIMITY ---
 function monitorRoomTasks(roomName) {
     db.ref().on('value', snap => {
         const data = snap.val() || {};
