@@ -27,14 +27,12 @@ const TASK_POOL = [
 
 const KILL_LIMIT = 1.524; // 5 feet
 const TASK_LIMIT = 3.0;   // 10 feet
+const PASSIVE_SNAP_LIMIT = 2.0; // 2 meters (Players snap to beacons automatically if this close)
 
-// Dynamic user GPS offsets calculated upon Calibration
 let calibrationOffsetX = 0;
 let calibrationOffsetY = 0;
 
 // --- 3. DGPS MATHEMATICS ---
-
-// Converts Latitude/Longitude to relative meters (X, Y) from the Host Computer (0,0)
 function getRelativeXY(lat, lon, baseLat, baseLon) {
     const latRad = baseLat * Math.PI / 180;
     const metersPerLatDegree = 111139; 
@@ -50,7 +48,7 @@ function getPythagoreanDistance(x1, y1, x2, y2) {
     return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
 }
 
-// --- 4. PLAYER SENSOR WITH ACTIVE DGPS & CALIBRATION OFFSET ---
+// --- 4. PLAYER SENSOR WITH ACTIVE DGPS & PASSIVE SNAPPING ---
 let gpsWatcherId = null;
 
 function startLocationTracking() {
@@ -58,6 +56,7 @@ function startLocationTracking() {
         const data = snap.val() || {};
         const base = data.baseCoords;
         const drift = data.gpsDrift || { lat: 0, lng: 0 }; 
+        const stations = data.stations || {};
 
         if (!base) return;
 
@@ -67,26 +66,52 @@ function startLocationTracking() {
 
         if (navigator.geolocation) {
             gpsWatcherId = navigator.geolocation.watchPosition(position => {
-                // 1. Apply active satellite drift corrections
+                // 1. Calculate relative coordinates
                 const correctedLat = position.coords.latitude - drift.lat;
                 const correctedLng = position.coords.longitude - drift.lng;
-
-                // 2. Project to flat plane (meters)
                 const relativeCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
                 
-                // 3. Apply custom calibration offset (calibrationOffsetX/Y)
-                const finalCalibratedX = relativeCoords.x + calibrationOffsetX;
-                const finalCalibratedY = relativeCoords.y + calibrationOffsetY;
+                let finalX = relativeCoords.x + calibrationOffsetX;
+                let finalY = relativeCoords.y + calibrationOffsetY;
+
+                // 2. PASSIVE BEACON SNAPPING: Automatically snap to the nearest beacon if within 2 meters
+                let nearestName = "Host";
+                let targetX = 0;
+                let targetY = 0;
+                let minDist = getPythagoreanDistance(0, 0, finalX, finalY); // Distance to Host (0,0)
+
+                for (let room in stations) {
+                    const s = stations[room];
+                    if (s.coords) {
+                        const dist = getPythagoreanDistance(s.coords.x, s.coords.y, finalX, finalY);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearestName = room;
+                            targetX = s.coords.x;
+                            targetY = s.coords.y;
+                        }
+                    }
+                }
+
+                // If physically close to a station/host, adjust calibration offset automatically
+                if (minDist <= PASSIVE_SNAP_LIMIT) {
+                    const rawX = finalX - calibrationOffsetX;
+                    const rawY = finalY - calibrationOffsetY;
+                    calibrationOffsetX = targetX - rawX;
+                    calibrationOffsetY = targetY - rawY;
+                    finalX = targetX;
+                    finalY = targetY;
+                }
 
                 db.ref(`players/${myId}/coords`).set({
-                    x: finalCalibratedX,
-                    y: finalCalibratedY,
+                    x: finalX,
+                    y: finalY,
                     timestamp: Date.now()
                 });
 
                 const statusText = document.getElementById('radar-status-text');
                 if (statusText) {
-                    statusText.innerText = `Calibrated Pos: (${finalCalibratedX.toFixed(1)}m, ${finalCalibratedY.toFixed(1)}m)`;
+                    statusText.innerText = `Calibrated Pos: (${finalX.toFixed(1)}m, ${finalY.toFixed(1)}m)`;
                 }
             }, err => {
                 console.error("GPS Watcher Error: ", err.message);
@@ -99,7 +124,7 @@ function startLocationTracking() {
     });
 }
 
-// Snaps coordinates to either Host (0,0) or the nearest Tablet Station
+// Manual calibration snap trigger
 function calibratePosition() {
     db.ref().once('value', snap => {
         const data = snap.val() || {};
@@ -112,17 +137,14 @@ function calibratePosition() {
             return;
         }
 
-        // Extract raw coordinate by removing current active calibration offsets
         const rawX = me.coords.x - calibrationOffsetX;
         const rawY = me.coords.y - calibrationOffsetY;
 
-        // Default: Assume nearest beacon is the Host Computer at (0,0)
         let nearestName = "Host Computer";
         let targetX = 0;
         let targetY = 0;
         let minDist = getPythagoreanDistance(0, 0, me.coords.x, me.coords.y); 
 
-        // Evaluate proximity to all placed Tablet Stations
         for (let room in stations) {
             const s = stations[room];
             if (s.coords) {
@@ -136,11 +158,9 @@ function calibratePosition() {
             }
         }
 
-        // Calculate offset required to snap raw coordinates exactly to the nearest target
         calibrationOffsetX = targetX - rawX;
         calibrationOffsetY = targetY - rawY;
 
-        // Force write to Firebase immediately
         db.ref(`players/${myId}/coords`).set({
             x: targetX,
             y: targetY,
@@ -157,7 +177,12 @@ function joinGame() {
     const name = nameInput ? nameInput.value.trim() : "Player";
     if (!name) return alert("Please enter a name!");
     
-    db.ref(`players/${myId}`).set({ name: name, status: 'alive', role: 'crewmate' });
+    db.ref(`players/${myId}`).set({ 
+        name: name, 
+        status: 'alive', 
+        role: 'crewmate',
+        coords: { x: 0, y: 0, timestamp: Date.now() } // Assume player starts at 0,0
+    });
     startLocationTracking();
 }
 
@@ -241,8 +266,6 @@ function tallyVotes() {
 }
 
 // --- 7. HOST DATABASE SYSTEM & DGPS WATCHER ---
-let hostGpsWatchId = null;
-
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
     const tableBody = document.getElementById('player-list-body');

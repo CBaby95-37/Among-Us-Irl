@@ -103,17 +103,27 @@
         </div>
     </div>
 
-    <!-- 3. TABLET VIEW -->
+    <!-- 3. TASK TABLET VIEW -->
     <div id="tablet-view" class="role-section" style="display:none;">
         <div id="tablet-setup">
-            <h2>Place and Calibrate Tablet:</h2>
-            <div style="background:#111; padding:20px; margin-bottom:20px; border-radius:10px; text-align:left;">
-                <p style="color:#888; margin-bottom: 10px;">Hold this tablet in the exact physical spot you want the task station to be, and click Calibrate below.</p>
-                <button onclick="calibrateTabletAnchor()" class="start-game-btn" style="margin: 0; padding: 15px; background: #45a29e; color: #111;">🎯 CALIBRATE TABLET POSITION</button>
+            <h2>Assign Room & Position:</h2>
+            
+            <!-- OPTION A: MANUAL COORDINATES -->
+            <div style="background:#111; padding:20px; margin-bottom:15px; border-radius:10px; text-align:left;">
+                <h3 style="color:#45a29e; margin-bottom:10px;">Option A: Manual Location</h3>
+                <input type="number" id="manual-x" placeholder="X Coordinate (meters)" step="0.1">
+                <input type="number" id="manual-y" placeholder="Y Coordinate (meters)" step="0.1">
             </div>
-            <div id="tablet-room-selection" class="room-grid" style="display: none;">
-                <!-- Room selection displays after coordinates are calibrated -->
+
+            <!-- OPTION B: GPS AUTO CALIBRATION -->
+            <div style="background:#111; padding:20px; margin-bottom:15px; border-radius:10px; text-align:left;">
+                <h3 style="color:#45a29e; margin-bottom:10px;">Option B: Auto GPS Calibration</h3>
+                <p style="color:#888; font-size:0.85rem; margin-bottom:10px;">Hold this tablet in the exact physical spot you want the task station to be, and click below:</p>
+                <button onclick="calibrateTabletAnchor()" class="start-game-btn" style="margin: 0; padding: 12px; background: #333; color: #fff; border: 1px solid #555;">🎯 RUN AUTO-CALIBRATION</button>
             </div>
+            
+            <h3 style="margin-top:20px;">Now, Select Room for Tablet:</h3>
+            <div id="tablet-room-selection" class="room-grid"></div>
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
@@ -360,7 +370,7 @@
 
                         localTabletCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
                         
-                        document.getElementById('tablet-room-selection').style.display = 'grid';
+                        alert("Auto-Calibration Completed! Coordinates stored locally. Now, select your room below.");
                     }, err => alert("Calibration Error: " + err.message), { enableHighAccuracy: true });
                 }
             });
@@ -374,13 +384,31 @@
                 b.style.margin = "5px";
                 b.innerText = room;
                 b.onclick = () => {
-                    if(!localTabletCoords) return alert("Calibrate position coordinates first!");
+                    // Check if Manual X/Y has been populated
+                    const manXInput = document.getElementById('manual-x').value;
+                    const manYInput = document.getElementById('manual-y').value;
+                    
+                    let coordsToSet = null;
+
+                    if (manXInput !== "" && manYInput !== "") {
+                        coordsToSet = {
+                            x: parseFloat(manXInput),
+                            y: parseFloat(manYInput)
+                        };
+                    } else if (localTabletCoords) {
+                        coordsToSet = localTabletCoords;
+                    }
+
+                    if (!coordsToSet) {
+                        alert("Please enter Manual coordinates (Option A) OR click Run Auto-Calibration (Option B) before choosing a room!");
+                        return;
+                    }
 
                     document.getElementById('tablet-setup').style.display = 'none';
                     document.getElementById('tablet-active').style.display = 'block';
                     document.getElementById('tablet-room-name').innerText = room.toUpperCase();
                     
-                    db.ref(`stations/${room}/coords`).set(localTabletCoords).then(() => {
+                    db.ref(`stations/${room}/coords`).set(coordsToSet).then(() => {
                         monitorRoomTasks(room);
                     });
                 };
@@ -394,11 +422,9 @@
             const overlay = document.getElementById('meeting-overlay');
             const mainMenu = document.getElementById('role-selector-screen');
 
-            // Evaluate if Player Phone or Host Dashboard is active
             const playerGameActive = document.getElementById('player-game').style.display === 'block';
             const hostDashboardActive = document.getElementById('host-dashboard').style.display === 'block';
 
-            // Show meeting overlays ONLY to Players and the Host (by-passes Tablet devices completely)
             if (isMeeting && mainMenu.style.display === 'none' && (playerGameActive || hostDashboardActive)) {
                 overlay.style.display = 'flex';
                 const players = data.players || {};
