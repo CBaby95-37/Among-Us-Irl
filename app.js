@@ -18,7 +18,7 @@ const db = firebase.database();
 const myId = localStorage.getItem('amongUsPlayerId') || "p_" + Math.floor(Math.random() * 100000);
 localStorage.setItem('amongUsPlayerId', myId);
 
-// --- 2. GAME CONSTANTS ---
+// --- 2. GAME CONSTANTS & SETTINGS ---
 const ROOMS = [
     "Living Room", "Boy's Bedroom", "Bathroom", 
     "Laundry Room", "Mya's Room", "Parents' Room", "Kitchen"
@@ -35,69 +35,81 @@ const TASK_POOL = [
     { name: "Manifold", icon: "🔢" }
 ];
 
-// Signal strength thresholds (measured in dBm)
-// -50 dBm to -65 dBm usually means very close (within 1-3 meters)
-const SIGNAL_KILL_THRESHOLD = -65; 
-const SIGNAL_TASK_THRESHOLD = -70; 
+const PROXIMITY_LIMIT = 4; // Max distance in meters to interact or kill
 
-let bleScan = null;
-let nearbyDeviceSignals = {}; // Stores { deviceName/ID: rssi }
+// --- 3. COORDINATE PROJECTION & PYTHAGOREAN MATH ---
 
-// --- 3. BLUETOOTH SCANNING ENGINE ---
-async function startBluetoothRadar() {
-    if (!navigator.bluetooth || !navigator.bluetooth.requestLEScan) {
-        alert("Web Bluetooth Scanning is not supported or enabled on this browser.\n\nTo enable on Chrome/Android:\nGo to chrome://flags and enable 'Experimental Web Platform features'.");
-        return;
-    }
+// Converts Latitude/Longitude to relative meters (X, Y) from the Host Computer (0,0)
+function getRelativeXY(lat, lon, baseLat, baseLon) {
+    const latRad = baseLat * Math.PI / 180;
+    
+    // Constant meters per degree approximations
+    const metersPerLatDegree = 111139; 
+    const metersPerLonDegree = 111139 * Math.cos(latRad);
 
-    try {
-        console.log("Starting BLE Radar scan...");
-        bleScan = await navigator.bluetooth.requestLEScan({
-            acceptAllAdvertisements: true,
-            keepRepeatedDevices: true
-        });
-
-        navigator.bluetooth.addEventListener('advertisementreceived', event => {
-            const name = event.device.name || "Unnamed Accessory";
-            const id = event.device.id;
-            const rssi = event.rssi; // Signal strength value
-
-            // Track the signal strength of this device
-            nearbyDeviceSignals[name] = rssi;
-            nearbyDeviceSignals[id] = rssi;
-
-            // Send our signal readings to our player node in Firebase
-            // so tablets and other players know how close we are to their items
-            db.ref(`players/${myId}/signals/${name}`).set(rssi);
-            db.ref(`players/${myId}/signals/${id}`).set(rssi);
-        });
-
-    } catch (error) {
-        console.error("Bluetooth scan failed: ", error);
-    }
+    const x = (lon - baseLon) * metersPerLonDegree;
+    const y = (lat - baseLat) * metersPerLatDegree;
+    
+    return { x: x, y: y };
 }
 
-// --- 4. PLAYER GAMEPLAY & KILL LOGIC ---
+// Pythagorean theorem calculation: d = sqrt( (x2 - x1)^2 + (y2 - y1)^2 )
+function getPythagoreanDistance(x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    return Math.sqrt((dx * dx) + (dy * dy));
+}
+
+// --- 4. GPS TRACKING SENSORS ---
+function startLocationTracking() {
+    db.ref('baseCoords').once('value', snap => {
+        const base = snap.val();
+        if (!base) {
+            console.warn("Base coordinates not set by Host yet.");
+            return;
+        }
+
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(position => {
+                // Project raw GPS to planar offsets (meters) relative to base coords
+                const relativeCoords = getRelativeXY(
+                    position.coords.latitude,
+                    position.coords.longitude,
+                    base.lat,
+                    base.lng
+                );
+                
+                db.ref(`players/${myId}/coords`).set({
+                    x: relativeCoords.x,
+                    y: relativeCoords.y,
+                    timestamp: Date.now()
+                });
+            }, err => {
+                console.error("GPS Sensor error: ", err.message);
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: 1000,
+                timeout: 5000
+            });
+        }
+    });
+}
+
+// --- 5. PLAYER GAMEPLAY & ACTION CONTROLS ---
 function joinGame() {
     const nameInput = document.getElementById('playerNameInput');
-    const btInput = document.getElementById('btDeviceInput');
-    
     const name = nameInput ? nameInput.value.trim() : "Player";
-    const btDevice = btInput ? btInput.value.trim() : ""; // e.g., "My Fitbit" or "Sony-WH"
-
     if (!name) return alert("Please enter a name!");
     
     db.ref(`players/${myId}`).set({ 
         name: name, 
         status: 'alive', 
-        role: 'crewmate',
-        btDevice: btDevice // The accessory name we are carrying
+        role: 'crewmate'
     });
-    
-    startBluetoothRadar();
+    startLocationTracking();
 }
 
-// Continuous Proximity Check for Impostors using RSSI Signals
+// Continuous Proximity Check for Impostors using Pythagorean Distances
 function startKillProximityCheck() {
     db.ref().on('value', snap => {
         const data = snap.val() || {};
@@ -107,18 +119,18 @@ function startKillProximityCheck() {
         if (!me || me.role !== 'impostor' || me.status !== 'alive') return;
         
         let targetNearby = false;
-
-        for (let id in players) {
-            if (id !== myId && players[id].status === 'alive') {
-                const targetBtDevice = players[id].btDevice;
-                
-                if (targetBtDevice) {
-                    // Check if our radar detected their wearable device nearby
-                    const signalStrength = nearbyDeviceSignals[targetBtDevice];
-                    
-                    if (signalStrength && signalStrength >= SIGNAL_KILL_THRESHOLD) {
-                        targetNearby = true;
-                        break;
+        const myCoords = me.coords;
+        
+        if (myCoords) {
+            for (let id in players) {
+                if (id !== myId && players[id].status === 'alive') {
+                    const pCoords = players[id].coords;
+                    if (pCoords) {
+                        const dist = getPythagoreanDistance(myCoords.x, myCoords.y, pCoords.x, pCoords.y);
+                        if (dist <= PROXIMITY_LIMIT) {
+                            targetNearby = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -136,26 +148,23 @@ function tryKill() {
         const allPlayers = snap.val();
         const me = allPlayers[myId];
         
-        if (me.role !== 'impostor' || me.status !== 'alive') return;
+        if (me.role !== 'impostor' || me.status !== 'alive' || !me.coords) return;
 
         for (let id in allPlayers) {
-            if (id !== myId && allPlayers[id].status === 'alive') {
-                const targetBt = allPlayers[id].btDevice;
-                if (targetBt) {
-                    const signalStrength = nearbyDeviceSignals[targetBt];
-                    if (signalStrength && signalStrength >= SIGNAL_KILL_THRESHOLD) {
-                        db.ref(`players/${id}/status`).set('ghost');
-                        alert(`Eliminated ${allPlayers[id].name}! (Signal: ${signalStrength} dBm)`);
-                        return;
-                    }
+            if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].coords) {
+                const dist = getPythagoreanDistance(me.coords.x, me.coords.y, allPlayers[id].coords.x, allPlayers[id].coords.y);
+                if (dist <= PROXIMITY_LIMIT) {
+                    db.ref(`players/${id}/status`).set('ghost');
+                    alert(`Eliminated ${allPlayers[id].name}!`);
+                    return;
                 }
             }
         }
-        alert("No targets physically close enough to strike!");
+        alert("No crewmates physically close enough to strike!");
     });
 }
 
-// --- 5. MEETING & VOTING LOGIC ---
+// --- 6. VOTING SYSTEM ---
 function callMeeting() {
     db.ref('votes').remove();
     db.ref('ejectionMessage').remove();
@@ -212,7 +221,7 @@ function tallyVotes() {
     });
 }
 
-// --- 6. HOST LOGIC ---
+// --- 7. HOST DASHBOARD MANAGEMENT ---
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
     const tableBody = document.getElementById('player-list-body');
@@ -228,7 +237,7 @@ db.ref('players').on('value', snap => {
                 <tr>
                     <td>${p.name}</td>
                     <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
-                    <td>${p.btDevice || 'None'}</td>
+                    <td>Tracker Ready</td>
                     <td><button style="background:#550000; color:white; border:none; padding:5px; cursor:pointer;" onclick="kickPlayer('${id}')">KICK</button></td>
                 </tr>
             `;
@@ -246,7 +255,7 @@ function startGame() {
 
     db.ref('players').once('value', snapshot => {
         const players = snapshot.val();
-        if (!players || Object.keys(players).length < 2) return alert("Need more players!");
+        if (!players || Object.keys(players).length < 2) return alert("Need at least 2 players!");
         
         const ids = Object.keys(players);
         const pCount = ids.length;
@@ -310,7 +319,7 @@ function resetGame() {
                     db.ref(`players/${id}/status`).set('alive');
                     db.ref(`players/${id}/role`).set('crewmate');
                     db.ref(`players/${id}/tasks`).remove();
-                    db.ref(`players/${id}/signals`).remove();
+                    db.ref(`players/${id}/coords`).remove();
                 }
             }
         });
@@ -345,16 +354,15 @@ function updateHostDashboard(players) {
     progress.style.width = percent + "%";
 }
 
-// --- 7. TABLET PROXIMITY TASK DETECTION ---
+// --- 8. TABLET PROXIMITY MONITORING ---
 function monitorRoomTasks(roomName) {
-    // Listen for changes across players and room assignments
     db.ref().on('value', snap => {
         const data = snap.val() || {};
         const players = data.players || {};
         const station = data.stations ? data.stations[roomName] : null;
         const container = document.getElementById('active-tasks-container');
         
-        if (!container || !station || !station.btDevice) return;
+        if (!container || !station || !station.coords) return;
         
         container.innerHTML = "";
         let playersPresent = false;
@@ -362,12 +370,11 @@ function monitorRoomTasks(roomName) {
         for (let id in players) {
             const p = players[id];
             
-            if (p.signals) {
-                // Read how strongly this specific player detects the Tablet's beacon
-                const signalStrength = p.signals[station.btDevice];
+            if (p.coords) {
+                // Pythagorean Distance math between player Cartesian relative coordinates
+                const distance = getPythagoreanDistance(station.coords.x, station.coords.y, p.coords.x, p.coords.y);
                 
-                // If they are close enough (stronger than threshold)
-                if (signalStrength && signalStrength >= SIGNAL_TASK_THRESHOLD) {
+                if (distance <= PROXIMITY_LIMIT) {
                     playersPresent = true;
                     const playerDiv = document.createElement('div');
                     playerDiv.className = "player-task-card";
@@ -411,7 +418,7 @@ function completeTask(playerId, taskId) {
     });
 }
 
-// --- 8. CAMERA STREAMING ---
+// --- 9. CAMERA STREAMING ---
 async function startCameraFeed(roomName) {
     document.getElementById('camera-setup').style.display = 'none';
     document.getElementById('camera-active').style.display = 'block';
