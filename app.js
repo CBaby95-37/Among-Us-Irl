@@ -27,15 +27,14 @@ const TASK_POOL = [
 
 const KILL_LIMIT = 2.0; 
 const TASK_LIMIT = 3.0; 
-let STEP_LENGTH = 0.7; // Default stride length in meters (adjustable in UI)
+let STEP_LENGTH = 0.7; 
 
-// --- 3. ANTI-DRIFT DEAD RECKONING ENGINE ---
+// --- 3. COMPATIBLE ABSOLUTE RADAR ENGINE ---
 let myCurrentX = 0;
 let myCurrentY = 0;
 let currentHeading = 0;
 let isTracking = false;
 
-// Anti-Drift Variables
 let stepCooldown = false;
 let isTurning = false;
 let turnTimer = null;
@@ -48,7 +47,7 @@ function startDeadReckoning() {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         DeviceOrientationEvent.requestPermission().then(permissionState => {
             if (permissionState === 'granted') attachSensors();
-            else alert("Motion sensors required!");
+            else alert("Compass and Motion permissions are required!");
         }).catch(console.error);
     } else {
         attachSensors();
@@ -56,26 +55,19 @@ function startDeadReckoning() {
 }
 
 function attachSensors() {
-    // 1. Compass Filter (Detects if you are currently turning around)
-    window.addEventListener("deviceorientation", (event) => {
-        let h = event.webkitCompassHeading || (event.alpha ? 360 - event.alpha : 0);
-        currentHeading = h;
+    // 1. Unified Cross-Platform Absolute Compass
+    if ('ondeviceorientationabsolute' in window) {
+        // Android/Chrome absolute event
+        window.addEventListener("deviceorientationabsolute", handleCompassInput, true);
+    } else if ('ondeviceorientation' in window) {
+        // iOS/Safari standard event
+        window.addEventListener("deviceorientation", handleCompassInput, true);
+    }
 
-        // If heading changes by more than 10 degrees quickly, you are turning. 
-        // Pause step detection so phone shaking during the turn isn't counted as walking.
-        if (Math.abs(h - lastHeading) > 10) {
-            isTurning = true;
-            clearTimeout(turnTimer);
-            turnTimer = setTimeout(() => { isTurning = false; }, 600);
-        }
-        lastHeading = h;
-    }, true);
-
-    // 2. Strict Step Detection
+    // 2. Accelerometer (Pedometer Step counter)
     window.addEventListener('devicemotion', (event) => {
-        // Use linear acceleration (ignores gravity tilt) if available
         let accelZ = 0;
-        if (event.acceleration && event.acceleration.z) {
+        if (event.acceleration && event.acceleration.z !== null) {
             accelZ = event.acceleration.z;
         } else if (event.accelerationIncludingGravity) {
             accelZ = event.accelerationIncludingGravity.z - 9.81;
@@ -83,17 +75,15 @@ function attachSensors() {
         
         if (accelZ === null) return;
 
-        // Must be a forceful step (> 2.5m/s2), not on cooldown, and NOT currently turning around
+        // Peak step detection
         if (Math.abs(accelZ) > 2.5 && !stepCooldown && !isTurning) {
             stepCooldown = true;
             registerStep();
-            
-            // Lock out step detection for 500ms (prevents double-bounces)
             setTimeout(() => { stepCooldown = false; }, 500); 
         }
     });
 
-    // Sync to Firebase
+    // Firebase position sync loop (1 second intervals)
     setInterval(() => {
         if(isTracking) {
             db.ref(`players/${myId}/coords`).set({
@@ -105,11 +95,34 @@ function attachSensors() {
     }, 1000);
 }
 
+// Normalized Compass Translation
+function handleCompassInput(event) {
+    let heading = 0;
+    
+    if (event.webkitCompassHeading) {
+        // iOS Native Absolute Compass
+        heading = event.webkitCompassHeading;
+    } else if (event.alpha !== null) {
+        // Android Absolute Alpha (relative to magnetic North on orientationabsolute)
+        heading = 360 - event.alpha;
+    }
+
+    currentHeading = heading;
+
+    // Detect fast rotational shifts to pause step tracking
+    if (Math.abs(heading - lastHeading) > 12) {
+        isTurning = true;
+        clearTimeout(turnTimer);
+        turnTimer = setTimeout(() => { isTurning = false; }, 500);
+    }
+    lastHeading = heading;
+}
+
 function registerStep() {
-    // Update Stride Length from UI
     const strideInput = document.getElementById('stride-length');
     if (strideInput) STEP_LENGTH = parseFloat(strideInput.value);
 
+    // Coordinate Vector mapping (radians)
     const headingRad = currentHeading * (Math.PI / 180);
     const dx = STEP_LENGTH * Math.sin(headingRad);
     const dy = STEP_LENGTH * Math.cos(headingRad);
@@ -123,14 +136,13 @@ function registerStep() {
     }
 }
 
-// Reset position to (0,0)
 function calibratePosition() {
     myCurrentX = 0;
     myCurrentY = 0;
     
     const radarStatus = document.getElementById('radar-status-text');
     if(radarStatus) radarStatus.innerText = `Pos: (0.0m, 0.0m) | Hdg: ${Math.round(currentHeading)}°`;
-    alert("Calibrated! You are now at origin (0,0).");
+    alert("Coordinates Reset! Both devices are now aligned at (0,0).");
 }
 
 function getPythagoreanDistance(x1, y1, x2, y2) {
@@ -222,7 +234,7 @@ function tallyVotes() {
     });
 }
 
-// --- 6. HOST LOGIC ---
+// --- 6. HOST DATABASE INTERFACES ---
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
     const tableBody = document.getElementById('player-list-body');
