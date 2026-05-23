@@ -35,7 +35,9 @@ const TASK_POOL = [
     { name: "Manifold", icon: "🔢" }
 ];
 
-const PROXIMITY_LIMIT = 4; // Max distance in meters to interact or kill
+// PROXIMITY CONFIGURATIONS
+const KILL_LIMIT = 1.524; // 5 feet converted to meters (strict distance for kills)
+const TASK_LIMIT = 3.0;   // ~10 feet converted to meters (wider range for stationary task tablets)
 
 // --- 3. COORDINATE PROJECTION & PYTHAGOREAN MATH ---
 
@@ -127,7 +129,8 @@ function startKillProximityCheck() {
                     const pCoords = players[id].coords;
                     if (pCoords) {
                         const dist = getPythagoreanDistance(myCoords.x, myCoords.y, pCoords.x, pCoords.y);
-                        if (dist <= PROXIMITY_LIMIT) {
+                        // Check against the 5-foot (1.524m) limit
+                        if (dist <= KILL_LIMIT) {
                             targetNearby = true;
                             break;
                         }
@@ -153,14 +156,15 @@ function tryKill() {
         for (let id in allPlayers) {
             if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].coords) {
                 const dist = getPythagoreanDistance(me.coords.x, me.coords.y, allPlayers[id].coords.x, allPlayers[id].coords.y);
-                if (dist <= PROXIMITY_LIMIT) {
+                // Enforce the 5-foot (1.524m) limit
+                if (dist <= KILL_LIMIT) {
                     db.ref(`players/${id}/status`).set('ghost');
                     alert(`Eliminated ${allPlayers[id].name}!`);
                     return;
                 }
             }
         }
-        alert("No crewmates physically close enough to strike!");
+        alert("No crewmates physically close enough (within 5 feet) to strike!");
     });
 }
 
@@ -374,7 +378,8 @@ function monitorRoomTasks(roomName) {
                 // Pythagorean Distance math between player Cartesian relative coordinates
                 const distance = getPythagoreanDistance(station.coords.x, station.coords.y, p.coords.x, p.coords.y);
                 
-                if (distance <= PROXIMITY_LIMIT) {
+                // Check against the stationary task tablet limit
+                if (distance <= TASK_LIMIT) {
                     playersPresent = true;
                     const playerDiv = document.createElement('div');
                     playerDiv.className = "player-task-card";
