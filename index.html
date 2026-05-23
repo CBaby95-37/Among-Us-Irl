@@ -89,11 +89,11 @@
             <div id="player-status-indicator"></div><hr>
             
             <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
-                <h3 style="color: #66fcf1;">🛰️ HIGH-ACCURACY DGPS</h3>
-                <p id="radar-status-text" style="color: #00ff00; font-size: 1.2rem; font-weight:bold; margin-top:10px;">Calibrating...</p>
+                <h3 style="color: #66fcf1;">🛰️ SENSOR FUSION TRACKER</h3>
+                <p id="radar-status-text" style="color: #00ff00; font-size: 1.1rem; font-weight:bold; margin-top:10px;">Calibrating...</p>
                 
                 <button onclick="calibratePosition()" style="background:#45a29e; color:#111; padding:10px; width:100%; margin-top:15px; font-weight:bold; border-radius:5px; border:none;">🎯 SYNC TO NEAREST BEACON</button>
-                <p style="color:#888; font-size:0.8rem; margin-top:5px;">Stand next to the Host Computer or any Tablet and click to instantly force-snap calibration.</p>
+                <p style="color:#888; font-size:0.8rem; margin-top:5px;">Stand next to the Host Computer or any Tablet and click to instantly snap/re-calibrate tracking offsets.</p>
             </div><hr>
             
             <div class="player-actions">
@@ -327,7 +327,7 @@
                     
                     const pulseRadius = 5 + (Date.now() % 1000) / 100;
                     ctx.strokeStyle = "rgba(255, 255, 0, 0.5)";
-                    ctx.beginPath(); ctx.arc(px, py, pulseRadius, 0, Math.PI*2); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(pulseRadius, 0, Math.PI*2); ctx.stroke();
                     
                     ctx.fillStyle = "#ffff33";
                     ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
