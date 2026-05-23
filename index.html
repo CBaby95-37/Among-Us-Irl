@@ -15,7 +15,7 @@
 </head>
 <body>
 
-    <!-- ROLE SELECTOR: The First Screen you see -->
+    <!-- ROLE SELECTOR -->
     <div id="role-selector-screen">
         <h1 class="glitch">AMONG US IRL</h1>
         <p>Choose the role for this device:</p>
@@ -27,11 +27,9 @@
         </div>
     </div>
 
-    <!-- 1. HOST COMPUTER VIEW (Settings & Monitoring) -->
+    <!-- 1. HOST VIEW -->
     <div id="host-view" class="role-section" style="display:none;">
         <h1 class="glitch">COMMAND CENTER</h1>
-        
-        <!-- Lobby State -->
         <div id="host-lobby-container" class="host-container">
             <div class="settings-panel">
                 <h3>GAME SETTINGS</h3>
@@ -51,34 +49,23 @@
                 <button class="start-game-btn" onclick="startGame()">🚀 START MISSION</button>
                 <button class="reset-btn" onclick="resetGame()">♻️ RESET ALL</button>
             </div>
-
             <div class="player-lobby">
                 <h3>CONNECTED PLAYERS (<span id="player-count">0</span>)</h3>
                 <table>
                     <thead>
-                        <tr><th>Name</th><th>Status</th><th>Location</th><th>Action</th></tr>
+                        <tr><th>Name</th><th>Status</th><th>Bluetooth Tag</th><th>Action</th></tr>
                     </thead>
                     <tbody id="player-list-body"></tbody>
                 </table>
             </div>
         </div>
-
-        <!-- In-Game State -->
         <div id="host-dashboard" style="display:none;">
-            <div class="progress-container">
-                <div id="task-progress-bar" style="width:0%"></div>
-            </div>
+            <div class="progress-container"><div id="task-progress-bar" style="width:0%"></div></div>
             <div class="main-layout">
-                <div class="security-section">
-                    <h3>LIVE CCTV FEEDS</h3>
-                    <div id="camera-grid"></div>
-                </div>
-                <div class="status-section">
-                    <h3>PLAYER DATA</h3>
-                    <div id="status-board"></div>
-                </div>
+                <div class="security-section"><h3>LIVE CCTV FEEDS</h3><div id="camera-grid"></div></div>
+                <div class="status-section"><h3>PLAYER DATA</h3><div id="status-board"></div></div>
             </div>
-            <button class="reset-btn" onclick="resetGame()">END GAME / RESET</button>
+            <button class="reset-btn" onclick="resetGame()">END GAME</button>
         </div>
     </div>
 
@@ -87,24 +74,20 @@
         <div id="player-setup">
             <h1>PLAYER JOIN</h1>
             <input type="text" id="playerNameInput" placeholder="Your Name...">
+            <input type="text" id="btDeviceInput" placeholder="Accessory Bluetooth Name (e.g. Fitbit, Sony-WH)">
+            <p style="font-size: 0.8rem; color:#aaa; margin: 10px 0;">Enter the exact Bluetooth name of a device you are wearing/carrying so players can detect you.</p>
             <button class="menu-btn" onclick="joinGame()">JOIN LOBBY</button>
         </div>
         <div id="player-game" style="display:none;">
-            <div id="role-reveal-box">
-                <h2 id="role-text"></h2>
-            </div>
+            <div id="role-reveal-box"><h2 id="role-text"></h2></div>
             <div id="player-status-indicator"></div>
             <hr>
-            
-            <!-- Automated Geolocation Status instead of Room Buttons -->
             <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
-                <h3 style="color: #66fcf1; margin-bottom: 5px;">🛰️ GPS RADAR ACTIVE</h3>
-                <p style="color: #888; font-size: 0.9rem;">Your physical position is being tracked automatically. Keep this page open.</p>
+                <h3 style="color: #66fcf1; margin-bottom: 5px;">📡 BLUETOOTH RADAR ACTIVE</h3>
+                <p style="color: #888; font-size: 0.9rem;">Keep your screen awake. Proximity to other players is automatically monitored.</p>
             </div>
-            
             <hr>
             <div class="player-actions">
-                <!-- Kill button turns visible automatically when target is nearby -->
                 <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
                 <button class="report-btn" onclick="callMeeting()">REPORT / EMERGENCY</button>
             </div>
@@ -119,7 +102,10 @@
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
-            <p style="color: #ffff33; margin-bottom: 20px;">🛰️ RADAR ONLINE - Stand near this station to show your tasks.</p>
+            <div class="calibration-panel" style="background:#111; padding:15px; border-radius:10px; border:1px solid #333; margin-bottom:20px;">
+                <input type="text" id="tabletBtDeviceInput" placeholder="Tablet Bluetooth Accessory Name">
+                <button onclick="lockTabletBeacon()" class="start-game-btn" style="margin-top:10px; padding:10px;">📡 LOCK BEACON SIGNAL</button>
+            </div>
             <div id="active-tasks-container"></div>
         </div>
     </div>
@@ -138,16 +124,12 @@
         </div>
     </div>
 
-    <!-- EMERGENCY MEETING & VOTING OVERLAY -->
+    <!-- EMERGENCY MEETING -->
     <div id="meeting-overlay" class="meeting-overlay" style="display:none;">
         <div class="meeting-box">
             <h1 style="color: #ff3333; margin-bottom: 5px;">🚨 EMERGENCY MEETING 🚨</h1>
-            <p style="color: #fff;">Discuss and Vote! Ghosts cannot vote.</p>
-            
-            <div id="voting-list" class="voting-grid">
-                <!-- Players generated here by JS -->
-            </div>
-            
+            <p style="color: #fff;">Discuss and Vote!</p>
+            <div id="voting-list" class="voting-grid"></div>
             <div class="voting-actions">
                 <button id="skip-vote-btn" class="skip-btn" onclick="castVote('skip')">⏭️ SKIP VOTE</button>
                 <button id="host-end-vote-btn" class="tally-btn" style="display:none;" onclick="tallyVotes()">TALLY VOTES & END</button>
@@ -155,10 +137,11 @@
         </div>
     </div>
 
-    <!-- Script Links -->
+    <!-- Script Logic Integration -->
     <script src="app.js"></script>
     <script>
-        // MASTER NAVIGATION
+        let currentAssignedRoom = "";
+
         function switchView(viewId) {
             document.getElementById('role-selector-screen').style.display = 'none';
             document.querySelectorAll('.role-section').forEach(sec => sec.style.display = 'none');
@@ -170,10 +153,8 @@
             if (viewId === 'camera-view') initCameraSelection();
         }
 
-        // --- HOST INITIALIZATION ---
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
-            
             db.ref('gameState').on('value', snap => {
                 if (snap.val() === 'playing') {
                     document.getElementById('host-lobby-container').style.display = 'none';
@@ -186,7 +167,6 @@
             });
         }
 
-        // --- PLAYER INITIALIZATION ---
         function initPlayerUI() {
             db.ref(`players/${myId}`).on('value', snap => {
                 const data = snap.val();
@@ -198,7 +178,6 @@
                     document.getElementById('player-status-indicator').innerText = "STATUS: " + data.status.toUpperCase();
                     
                     if(data.role === 'impostor' && data.status === 'alive') {
-                        // Start continuously evaluating proximity to other players to toggle the Kill button
                         startKillProximityCheck();
                     } else {
                         document.getElementById('kill-btn').style.display = 'none';
@@ -209,14 +188,10 @@
                     } else {
                         document.body.style.filter = "none";
                     }
-
-                    // Start high-accuracy coordinate updates to Firebase
-                    startLocationTracking();
                 }
             });
         }
 
-        // --- TABLET INITIALIZATION ---
         function initTabletSelection() {
             const div = document.getElementById('tablet-room-selection');
             div.innerHTML = "";
@@ -229,27 +204,24 @@
                     document.getElementById('tablet-setup').style.display = 'none';
                     document.getElementById('tablet-active').style.display = 'block';
                     document.getElementById('tablet-room-name').innerText = room.toUpperCase() + " STATION";
-                    
-                    // Capture stationary coordinate lock on click
-                    if (navigator.geolocation) {
-                        navigator.geolocation.getCurrentPosition(position => {
-                            const coords = {
-                                lat: position.coords.latitude,
-                                lng: position.coords.longitude
-                            };
-                            db.ref(`stations/${room}/coords`).set(coords).then(() => {
-                                monitorRoomTasks(room);
-                            });
-                        }, err => {
-                            alert("Tablet GPS Error: Ensure Location Services are turned on.");
-                        }, { enableHighAccuracy: true });
-                    }
+                    currentAssignedRoom = room;
                 };
                 div.appendChild(b);
             });
         }
 
-        // --- CAMERA INITIALIZATION ---
+        function lockTabletBeacon() {
+            const btName = document.getElementById('tabletBtDeviceInput').value.trim();
+            if (!btName) return alert("Please enter the tablet's reference Bluetooth name!");
+            
+            db.ref(`stations/${currentAssignedRoom}`).set({
+                btDevice: btName
+            }).then(() => {
+                document.querySelector('.calibration-panel').innerHTML = `<p style="color:#00ff00; font-weight:bold;">🛰️ RADAR LOCKED ON TO: ${btName}</p>`;
+                monitorRoomTasks(currentAssignedRoom);
+            });
+        }
+
         function initCameraSelection() {
             const div = document.getElementById('camera-room-selection');
             div.innerHTML = "";
@@ -263,7 +235,7 @@
             });
         }
 
-        // --- VOTING SYSTEM & MEETING LISTENER ---
+        // VOTING LISTENER
         db.ref().on('value', snap => {
             const data = snap.val() || {};
             const isMeeting = data.meeting;
@@ -285,7 +257,6 @@
                     const p = players[id];
                     if (p.status === 'alive') {
                         const hasVoted = votes[id] ? "✅ Voted" : "⏳ Thinking...";
-                        
                         let btnHtml = "";
                         if (amIAlive && !myVote) {
                             btnHtml = `<button class="vote-action-btn" onclick="castVote('${id}')">VOTE</button>`;
@@ -302,20 +273,15 @@
                         `;
                     }
                 }
-
                 document.getElementById('skip-vote-btn').style.display = (amIAlive && !myVote) ? 'block' : 'none';
-                
             } else {
                 overlay.style.display = 'none';
             }
         });
 
-        // Listen for Ejection Results from Host
         db.ref('ejectionMessage').on('value', snap => {
             const msg = snap.val();
-            if (msg) {
-                alert("🗳️ RESULT: " + msg);
-            }
+            if (msg) alert("🗳️ RESULT: " + msg);
         });
     </script>
 </body>
