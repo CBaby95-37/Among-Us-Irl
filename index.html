@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Among Us IRL - Command Center</title>
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- Firebase SDKs (Namespaced version for easier browser usage) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    
+    <!-- PeerJS for Camera Feeds -->
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+    <div id="host-lobby">
+        <h1 class="glitch">THE SKELD: HOST</h1>
+        <div class="lobby-box">
+            <h2>Lobby Code: <span style="color: #00ff00;">G-HOST</span></h2>
+            <hr>
+            <h3>Players Joined: <span id="player-count">0</span></h3>
+            <div id="player-list-container">
+                <ul id="player-list"></ul>
+            </div>
+            <button id="start-btn" onclick="startGame()">START GAME</button>
+            <p id="requirement-hint">Need at least 4 players to start.</p>
+        </div>
+    </div>
+
+    <div id="host-dashboard" class="screen">
+        <div class="top-bar">
+            <h2>TASK PROGRESS</h2>
+            <div class="progress-container">
+                <div id="task-progress-bar" style="width: 0%;"></div>
+            </div>
+        </div>
+
+        <div class="main-layout">
+            <div class="security-section">
+                <h3>SECURITY CAMERAS</h3>
+                <div id="camera-grid">
+                    <!-- Video feeds will appear here -->
+                </div>
+            </div>
+            
+            <div class="status-section">
+                <h3>PLAYER STATUS</h3>
+                <div id="status-board"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Emergency Meeting Overlay -->
+    <div id="meeting-overlay" class="meeting-overlay" style="display:none;">
+        <div class="meeting-content">
+            <img src="https://media.tenor.com/C7v1h8Tj-mAAAAAC/among-us-emergency-meeting.gif" width="300">
+            <h1 style="color: white; font-size: 3rem;">EMERGENCY MEETING</h1>
+            <button onclick="endMeeting()">RESUME GAME</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        // --- HOST SPECIFIC LOGIC ---
+        let peer;
+
+        // Initialize PeerJS for Cameras
+        function initCameras() {
+            peer = new Peer('among-us-host-computer');
+            
+            db.ref('cameras').on('value', snapshot => {
+                const cameras = snapshot.val() || {};
+                const grid = document.getElementById('camera-grid');
+                grid.innerHTML = ""; 
+
+                for (let room in cameras) {
+                    let camData = cameras[room];
+                    let container = document.createElement('div');
+                    container.className = "camera-feed";
+                    container.innerHTML = `<span>${room}</span><video id="vid-${camData.peerId}" autoplay playsinline></video>`;
+                    grid.appendChild(container);
+
+                    // Call the camera
+                    const call = peer.call(camData.peerId, null);
+                    if(call) {
+                        call.on('stream', (remoteStream) => {
+                            const vid = document.getElementById(`vid-${camData.peerId}`);
+                            if(vid) vid.srcObject = remoteStream;
+                        });
+                    }
+                }
+            });
+        }
+
+        // Listen for Player List
+        db.ref('players').on('value', snap => {
+            const players = snap.val() || {};
+            const ids = Object.keys(players);
+            document.getElementById('player-count').innerText = ids.length;
+            
+            // Update Lobby List
+            const list = document.getElementById('player-list');
+            list.innerHTML = ids.map(id => `<li>${players[id].name}</li>`).join('');
+
+            // Update Game Dashboard Status Board
+            const board = document.getElementById('status-board');
+            board.innerHTML = ids.map(id => `
+                <div class="status-card ${players[id].status}">
+                    ${players[id].name}: <b>${players[id].status.toUpperCase()}</b><br>
+                    <small>Location: ${players[id].currentRoom || 'Unknown'}</small>
+                </div>
+            `).join('');
+
+            // Calculate Task Progress
+            let totalTasks = 0;
+            let completedTasks = 0;
+            ids.forEach(id => {
+                const tasks = players[id].tasks || [];
+                tasks.forEach(t => {
+                    totalTasks++;
+                    if(t.done) completedTasks++;
+                });
+            });
+            const percent = totalTasks === 0 ? 0 : (completedTasks / totalTasks) * 100;
+            document.getElementById('task-progress-bar').style.width = percent + "%";
+
+            if(percent >= 100 && totalTasks > 0) {
+                alert("CREWMATES WIN BY TASKS!");
+                db.ref('gameState').set('lobby');
+            }
+        });
+
+        // Listen for Meetings
+        db.ref('meeting').on('value', snap => {
+            const overlay = document.getElementById('meeting-overlay');
+            if(snap.val() === true) {
+                overlay.style.display = 'flex';
+            } else {
+                overlay.style.display = 'none';
+            }
+        });
+
+        function endMeeting() {
+            db.ref('meeting').set(false);
+        }
+
+        function startGame() {
+            // Role Distribution Logic as requested
+            db.ref('players').once('value', snapshot => {
+                const players = snapshot.val();
+                if (!players || Object.keys(players).length < 4) {
+                    alert("Need at least 4 players!");
+                    return;
+                }
+                
+                // Switch UI
+                document.getElementById('host-lobby').style.display = 'none';
+                document.getElementById('host-dashboard').classList.add('active');
+                
+                // Call the app.js logic to assign roles
+                assignRolesAndStart(); 
+                initCameras();
+            });
+        }
+
+        function assignRolesAndStart() {
+            db.ref('players').once('value', snapshot => {
+                const players = snapshot.val();
+                const ids = Object.keys(players);
+                const pCount = ids.length;
+
+                // Requirement Logic: 4+: 1 imp, 6+: 2 imp, 9+: 3 imp
+                let impCount = 1;
+                if (pCount >= 9) impCount = 3;
+                else if (pCount >= 6) impCount = 2;
+
+                const shuffled = ids.sort(() => 0.5 - Math.random());
+                const updates = {};
+                
+                shuffled.forEach((id, index) => {
+                    const role = index < impCount ? 'impostor' : 'crewmate';
+                    const myTasks = [];
+                    // Generate 4 tasks in different rooms
+                    for(let i=0; i<4; i++) {
+                        myTasks.push({
+                            id: 't' + i,
+                            name: TASK_POOL[Math.floor(Math.random() * TASK_POOL.length)].name,
+                            room: ROOMS[Math.floor(Math.random() * ROOMS.length)],
+                            done: false
+                        });
+                    }
+                    
+                    updates[`players/${id}/role`] = role;
+                    updates[`players/${id}/status`] = 'alive';
+                    updates[`players/${id}/tasks`] = myTasks;
+                });
+
+                updates['gameState'] = 'playing';
+                db.ref().update(updates);
+            });
+        }
+    </script>
+
+    <style>
+        .lobby-box { background: rgba(255,255,255,0.1); padding: 30px; border-radius: 15px; display: inline-block; min-width: 300px; }
+        #player-list { list-style: none; padding: 0; font-size: 1.5rem; color: #33ffff; }
+        .progress-container { width: 100%; background: #444; height: 30px; border: 2px solid white; margin-top: 10px; }
+        #task-progress-bar { background: #00ff00; height: 100%; transition: width 0.5s; }
+        .main-layout { display: flex; justify-content: space-around; margin-top: 20px; }
+        .security-section { width: 60%; }
+        .status-section { width: 30%; background: #222; padding: 10px; border-radius: 10px; }
+        .camera-grid { display: flex; flex-wrap: wrap; }
+        .camera-feed { width: 250px; height: 180px; background: black; border: 2px solid #555; margin: 10px; position: relative; }
+        .camera-feed span { position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,0.7); font-size: 0.8rem; padding: 2px 5px; }
+        .camera-feed video { width: 100%; height: 100%; object-fit: cover; }
+        .status-card { padding: 8px; margin: 5px; border-radius: 5px; border-left: 5px solid; text-align: left;}
+        .status-card.alive { border-color: #00ff00; background: #2a3d2a; }
+        .status-card.ghost { border-color: #ff0000; background: #3d2a2a; opacity: 0.7; }
+        .meeting-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(200, 0, 0, 0.9); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+        .meeting-content { text-align: center; }
+    </style>
+</body>
+</html>

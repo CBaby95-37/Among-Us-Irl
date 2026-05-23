@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Room Tablet</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- 1. Firebase Core -->
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<!-- 2. Firebase Database -->
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<!-- 3. Your Logic -->
+<script src="app.js"></script>
+</head>
+<body>
+    <div id="config">
+        <h2>Which room is this?</h2>
+        <button onclick="setRoom('Kitchen')">Kitchen</button>
+        <button onclick="setRoom('Living Room')">Living Room</button>
+    </div>
+
+    <div id="task-station" class="screen">
+        <h1 id="room-title"></h1>
+        <div id="active-tasks">
+            <!-- Dynamically populated when player is nearby -->
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        let thisRoom = "";
+        function setRoom(name) {
+            thisRoom = name;
+            document.getElementById('config').style.display = 'none';
+            document.getElementById('task-station').classList.add('active');
+            document.getElementById('room-title').innerText = name + " Station";
+            startMonitoring();
+        }
+
+        function startMonitoring() {
+    db.ref('players').on('value', snap => {
+        const players = snap.val();
+        const taskArea = document.getElementById('active-tasks');
+        taskArea.innerHTML = "";
+        
+        for(let id in players) {
+            // If player is in THIS room
+            if(players[id].currentRoom === thisRoom) {
+                const p = players[id];
+                const playerBox = document.createElement('div');
+                playerBox.className = "player-task-card";
+                
+                // Show tasks if they have them in this room, OR show "fake" tasks if impostor
+                const roomTasks = (p.tasks || []).filter(t => t.room === thisRoom);
+                
+                let taskHtml = `<h3>${p.name}</h3>`;
+                
+                if (roomTasks.length > 0) {
+                    roomTasks.forEach(t => {
+                        const statusClass = t.done ? "done" : "pending";
+                        taskHtml += `<button class="${statusClass}" onclick="completeTask('${id}', '${t.id}')">
+                                        ${t.name} ${t.done ? '✅' : ''}
+                                     </button>`;
+                    });
+                } else {
+                    taskHtml += `<p>No tasks here.</p>`;
+                }
+                
+                playerBox.innerHTML = taskHtml;
+                taskArea.appendChild(playerBox);
+            }
+        }
+    });
+}
+        
+        function completeTask(pId, tId) {
+            // Logic to update progress bar on host
+            db.ref('gameStats/completedTasks').transaction(curr => (curr || 0) + 1);
+            alert("Task Complete!");
+        }
+    </script>
+</body>
+</html>

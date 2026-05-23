@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Among Us IRL - Player</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- 1. Firebase Core -->
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<!-- 2. Firebase Database -->
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<!-- 3. Your Logic -->
+<script src="app.js"></script>
+</head>
+<body>
+    <div id="setup">
+        <input type="text" id="pName" placeholder="Enter Name">
+        <button onclick="joinGame()">JOIN LOBBY</button>
+    </div>
+
+    <div id="role-reveal" class="screen">
+        <h1 id="role-display"></h1>
+    </div>
+
+    <div id="gameplay" class="screen">
+        <div id="room-selector">
+            <button onclick="changeRoom('Kitchen')">Kitchen</button>
+            <button onclick="changeRoom('Living Room')">Living Room</button>
+            <button onclick="changeRoom('Laundry')">Laundry</button>
+            <!-- Add other rooms here -->
+        </div>
+        <hr>
+        <div id="actions">
+            <button id="kill-btn" style="display:none; background:red;" onclick="tryKill()">KILL</button>
+            <button onclick="callMeeting()">REPORT / EMERGENCY</button>
+        </div>
+    </div>
+
+    <div id="death-screen" class="screen" style="background: black;">
+        <img src="https://media.tenor.com/7S7v-X3A2m8AAAAC/among-us-dead.gif" width="100%">
+        <h1>YOU WERE KILLED</h1>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        function joinGame() {
+            const name = document.getElementById('pName').value;
+            db.ref('players/' + myId).set({ name: name, status: 'alive', currentRoom: 'Lobby' });
+            document.getElementById('setup').style.display = 'none';
+        }
+
+        function changeRoom(room) {
+            db.ref(`players/${myId}/currentRoom`).set(room);
+        }
+
+        // Listen for role reveal
+        db.ref(`players/${myId}/role`).on('value', snap => {
+            if(snap.val()) {
+                document.getElementById('role-reveal').classList.add('active');
+                document.getElementById('role-display').innerText = snap.val().toUpperCase();
+                document.getElementById('role-display').className = snap.val() + "-text";
+                if(snap.val() === 'impostor') document.getElementById('kill-btn').style.display = 'block';
+                setTimeout(() => {
+                    document.getElementById('role-reveal').classList.remove('active');
+                    document.getElementById('gameplay').classList.add('active');
+                }, 3000);
+            }
+        });
+
+        db.ref(`players/${myId}/status`).on('value', snap => {
+            if(snap.val() === 'ghost') {
+                document.getElementById('gameplay').classList.add('ghost-mode');
+                document.getElementById('death-screen').classList.add('active');
+                setTimeout(() => document.getElementById('death-screen').classList.remove('active'), 4000);
+            }
+        });
+    </script>
+</body>
+</html>
