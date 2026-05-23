@@ -28,25 +28,19 @@ const TASK_POOL = [
     { name: "Fix Wires", icon: "🔌" },
     { name: "Download Data", icon: "💾" },
     { name: "Empty Trash", icon: "🗑️" },
-    { name: "Divert Power", icon: "⚡" },
-    { name: "Clean Filter", icon: "🧹" },
-    { name: "Asteroids", icon: "☄️" },
-    { name: "Swipe Card", icon: "💳" },
-    { name: "Manifold", icon: "🔢" }
+    { name: "Divert Power", icon: "⚡" }
 ];
 
-const KILL_LIMIT = 1.524; 
-const TASK_LIMIT = 3.0;   
+const KILL_LIMIT = 1.524; // 5 feet
+const TASK_LIMIT = 3.0;   // 10 feet
 
-// --- 3. COORDINATE PROJECTION & PYTHAGOREAN MATH ---
+// --- 3. COORDINATE PROJECTION MATH ---
 function getRelativeXY(lat, lon, baseLat, baseLon) {
     const latRad = baseLat * Math.PI / 180;
     const metersPerLatDegree = 111139; 
     const metersPerLonDegree = 111139 * Math.cos(latRad);
-
     const x = (lon - baseLon) * metersPerLonDegree;
     const y = (lat - baseLat) * metersPerLatDegree;
-    
     return { x: x, y: y };
 }
 
@@ -56,19 +50,14 @@ function getPythagoreanDistance(x1, y1, x2, y2) {
     return Math.sqrt((dx * dx) + (dy * dy));
 }
 
-// --- 4. PLAYER POSITION SENSOR (REAL-TIME SYNC) ---
+// --- 4. GPS TRACKING SENSORS ---
 let gpsWatcherId = null;
 
 function startLocationTracking() {
-    // Listen for coordinates instead of checking once
     db.ref('baseCoords').on('value', snap => {
         const base = snap.val();
-        if (!base) {
-            console.log("Waiting for Host to publish base coordinates...");
-            return;
-        }
+        if (!base) return; 
 
-        // Clear existing watch loops to avoid memory leaks
         if (gpsWatcherId !== null && navigator.geolocation) {
             navigator.geolocation.clearWatch(gpsWatcherId);
         }
@@ -81,7 +70,6 @@ function startLocationTracking() {
                     base.lat,
                     base.lng
                 );
-                
                 db.ref(`players/${myId}/coords`).set({
                     x: relativeCoords.x,
                     y: relativeCoords.y,
@@ -89,28 +77,18 @@ function startLocationTracking() {
                 });
             }, err => {
                 console.error("GPS Watch Error: ", err.message);
-            }, {
-                enableHighAccuracy: true,
-                maximumAge: 1000,
-                timeout: 10000
-            });
-        } else {
-            console.error("Geolocation not supported on this browser context.");
+            }, { enableHighAccuracy: true, maximumAge: 0 });
         }
     });
 }
 
-// --- 5. PLAYER GAMEPLAY & ACTION CONTROLS ---
+// --- 5. PLAYER GAMEPLAY CONTROLS ---
 function joinGame() {
     const nameInput = document.getElementById('playerNameInput');
     const name = nameInput ? nameInput.value.trim() : "Player";
     if (!name) return alert("Please enter a name!");
     
-    db.ref(`players/${myId}`).set({ 
-        name: name, 
-        status: 'alive', 
-        role: 'crewmate'
-    });
+    db.ref(`players/${myId}`).set({ name: name, status: 'alive', role: 'crewmate' });
     startLocationTracking();
 }
 
@@ -123,27 +101,20 @@ function startKillProximityCheck() {
         if (!me || me.role !== 'impostor' || me.status !== 'alive') return;
         
         let targetNearby = false;
-        const myCoords = me.coords;
-        
-        if (myCoords) {
+        if (me.coords) {
             for (let id in players) {
-                if (id !== myId && players[id].status === 'alive') {
-                    const pCoords = players[id].coords;
-                    if (pCoords) {
-                        const dist = getPythagoreanDistance(myCoords.x, myCoords.y, pCoords.x, pCoords.y);
-                        if (dist <= KILL_LIMIT) {
-                            targetNearby = true;
-                            break;
-                        }
+                if (id !== myId && players[id].status === 'alive' && players[id].coords) {
+                    const dist = getPythagoreanDistance(me.coords.x, me.coords.y, players[id].coords.x, players[id].coords.y);
+                    if (dist <= KILL_LIMIT) {
+                        targetNearby = true;
+                        break;
                     }
                 }
             }
         }
         
         const killBtn = document.getElementById('kill-btn');
-        if (killBtn) {
-            killBtn.style.display = targetNearby ? 'block' : 'none';
-        }
+        if (killBtn) killBtn.style.display = targetNearby ? 'block' : 'none';
     });
 }
 
@@ -151,7 +122,6 @@ function tryKill() {
     db.ref('players').once('value', snap => {
         const allPlayers = snap.val();
         const me = allPlayers[myId];
-        
         if (me.role !== 'impostor' || me.status !== 'alive' || !me.coords) return;
 
         for (let id in allPlayers) {
@@ -164,7 +134,6 @@ function tryKill() {
                 }
             }
         }
-        alert("No crewmates physically close enough (within 5 feet) to strike!");
     });
 }
 
@@ -174,77 +143,49 @@ function callMeeting() {
     db.ref('ejectionMessage').remove();
     db.ref('meeting').set(true);
 }
-
 function castVote(targetId) {
     db.ref(`players/${myId}`).once('value', snap => {
-        const me = snap.val();
-        if(me && me.status === 'alive') {
-            db.ref(`votes/${myId}`).set(targetId);
-        } else {
-            alert("Ghosts cannot vote!");
-        }
+        if(snap.val() && snap.val().status === 'alive') db.ref(`votes/${myId}`).set(targetId);
     });
 }
-
 function tallyVotes() {
     db.ref().once('value', snap => {
         const data = snap.val();
         const votes = data.votes || {};
         const players = data.players || {};
-
         let counts = {};
-        for (let voter in votes) {
-            let target = votes[voter];
-            counts[target] = (counts[target] || 0) + 1;
+        for (let v in votes) { counts[votes[v]] = (counts[votes[v]] || 0) + 1; }
+        
+        let max = 0, ejected = null, tie = false;
+        for (let t in counts) {
+            if (counts[t] > max) { max = counts[t]; ejected = t; tie = false; }
+            else if (counts[t] === max) { tie = true; }
         }
 
-        let maxVotes = 0;
-        let ejectedId = null;
-        let tie = false;
-
-        for (let target in counts) {
-            if (counts[target] > maxVotes) {
-                maxVotes = counts[target];
-                ejectedId = target;
-                tie = false;
-            } else if (counts[target] === maxVotes) {
-                tie = true;
-            }
-        }
-
-        let message = "";
-        if (!tie && ejectedId && ejectedId !== 'skip') {
-            message = `${players[ejectedId].name} was ejected.`;
-            db.ref(`players/${ejectedId}/status`).set('ghost');
-        } else {
-            message = "No one was ejected (Tie or Skipped).";
-        }
-
-        db.ref('ejectionMessage').set(message);
+        let msg = (!tie && ejected && ejected !== 'skip') ? `${players[ejected].name} was ejected.` : "No one was ejected.";
+        if(!tie && ejected && ejected !== 'skip') db.ref(`players/${ejected}/status`).set('ghost');
+        
+        db.ref('ejectionMessage').set(msg);
         db.ref('meeting').set(false);
     });
 }
 
-// --- 7. HOST DASHBOARD MANAGEMENT ---
+// --- 7. HOST DASHBOARD LOGIC ---
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
     const tableBody = document.getElementById('player-list-body');
     const countSpan = document.getElementById('player-count');
-    
     if (tableBody && countSpan) {
         countSpan.innerText = Object.keys(players).length;
         tableBody.innerHTML = "";
-
         for (let id in players) {
             const p = players[id];
-            tableBody.innerHTML += `
-                <tr>
-                    <td>${p.name}</td>
-                    <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
-                    <td>Tracker Ready</td>
-                    <td><button style="background:#550000; color:white; border:none; padding:5px; cursor:pointer;" onclick="kickPlayer('${id}')">KICK</button></td>
-                </tr>
-            `;
+            tableBody.innerHTML += `<tr>
+                <td>${p.name}</td>
+                <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
+                <td>${p.coords ? "GPS OK" : "Waiting for GPS..."}</td>
+                <td><button onclick="kickPlayer('${id}')">KICK</button></td>
+            </tr>`;
         }
     }
     updateHostDashboard(players);
@@ -253,24 +194,19 @@ db.ref('players').on('value', snap => {
 function startGame() {
     const impLogicSelect = document.getElementById('setting-imp-logic');
     const taskCountInput = document.getElementById('setting-task-count');
-    
     const impLogic = impLogicSelect ? impLogicSelect.value : 'auto';
     const taskCount = taskCountInput ? parseInt(taskCountInput.value) : 4;
 
     db.ref('players').once('value', snapshot => {
         const players = snapshot.val();
         if (!players || Object.keys(players).length < 2) return alert("Need at least 2 players!");
-        
         const ids = Object.keys(players);
-        const pCount = ids.length;
-
+        
         let impCount = 1;
         if (impLogic === 'auto') {
-            if (pCount >= 9) impCount = 3;
-            else if (pCount >= 6) impCount = 2;
-        } else {
-            impCount = parseInt(impLogic);
-        }
+            if (ids.length >= 9) impCount = 3;
+            else if (ids.length >= 6) impCount = 2;
+        } else impCount = parseInt(impLogic);
 
         const shuffled = ids.sort(() => 0.5 - Math.random());
         const updates = {};
@@ -278,7 +214,6 @@ function startGame() {
         shuffled.forEach((id, index) => {
             const role = index < impCount ? 'impostor' : 'crewmate';
             const myTasks = [];
-            
             for(let i=0; i < taskCount; i++) {
                 myTasks.push({
                     id: 't' + Math.floor(Math.random() * 10000),
@@ -287,7 +222,6 @@ function startGame() {
                     done: false
                 });
             }
-            
             updates[`players/${id}/role`] = role;
             updates[`players/${id}/status`] = 'alive';
             updates[`players/${id}/tasks`] = myTasks;
@@ -295,31 +229,20 @@ function startGame() {
 
         updates['gameState'] = 'playing';
         updates['meeting'] = false;
-        updates['ejectionMessage'] = null;
-        updates['votes'] = null;
         db.ref().update(updates);
     });
 }
 
-function kickPlayer(id) {
-    if(confirm("Kick this player?")) {
-        db.ref(`players/${id}`).remove();
-    }
-}
-
+function kickPlayer(id) { if(confirm("Kick?")) db.ref(`players/${id}`).remove(); }
 function resetGame() {
-    if(confirm("Reset the game?")) {
-        db.ref('gameState').set('lobby');
-        db.ref('meeting').set(false);
-        db.ref('cameras').remove();
-        db.ref('votes').remove();
-        db.ref('ejectionMessage').remove();
-        db.ref('stations').remove();
-        
+    if(confirm("Reset game?")) {
+        db.ref().update({
+            gameState: 'lobby', meeting: false, cameras: null, votes: null, ejectionMessage: null, stations: null
+        });
         db.ref('players').once('value', snap => {
-            const players = snap.val();
-            if(players) {
-                for(let id in players) {
+            const p = snap.val();
+            if(p) {
+                for(let id in p) {
                     db.ref(`players/${id}/status`).set('alive');
                     db.ref(`players/${id}/role`).set('crewmate');
                     db.ref(`players/${id}/tasks`).remove();
@@ -336,36 +259,35 @@ function updateHostDashboard(players) {
     const progress = document.getElementById('task-progress-bar');
     if(!board || !progress) return;
 
-    let total = 0;
-    let done = 0;
-    let html = "";
+    let total = 0, done = 0, html = "";
     
     for(let id in players) {
         const p = players[id];
-        const statusColor = p.status === 'alive' ? '#00ff00' : '#ff0000';
-        html += `<div style="background:#333; padding:10px; margin-bottom:5px; border-left:5px solid ${statusColor};">
-                    <b>${p.name}</b>: ${p.status.toUpperCase()}
+        let distMsg = "No GPS yet";
+        if(p.coords) {
+            // Distance from Host origin (0,0)
+            const d = getPythagoreanDistance(0,0, p.coords.x, p.coords.y).toFixed(1);
+            distMsg = `${d}m from Host`;
+        }
+        
+        html += `<div style="background:#333; padding:10px; margin-bottom:5px; border-left:5px solid ${p.status === 'alive' ? '#00ff00' : '#ff0000'};">
+                    <b>${p.name}</b>: ${p.status.toUpperCase()} <br>
+                    <small style="color:#aaa;">${distMsg}</small>
                  </div>`;
         
-        (p.tasks || []).forEach(t => {
-            total++;
-            if(t.done) done++;
-        });
+        (p.tasks || []).forEach(t => { total++; if(t.done) done++; });
     }
     board.innerHTML = html;
-
-    const percent = total === 0 ? 0 : (done / total) * 100;
-    progress.style.width = percent + "%";
+    progress.style.width = (total === 0 ? 0 : (done / total) * 100) + "%";
 }
 
-// --- 8. TABLET PROXIMITY MONITORING ---
+// --- 8. TABLET PROXIMITY ---
 function monitorRoomTasks(roomName) {
     db.ref().on('value', snap => {
         const data = snap.val() || {};
         const players = data.players || {};
         const station = data.stations ? data.stations[roomName] : null;
         const container = document.getElementById('active-tasks-container');
-        
         if (!container || !station || !station.coords) return;
         
         container.innerHTML = "";
@@ -373,108 +295,30 @@ function monitorRoomTasks(roomName) {
 
         for (let id in players) {
             const p = players[id];
-            
             if (p.coords) {
                 const distance = getPythagoreanDistance(station.coords.x, station.coords.y, p.coords.x, p.coords.y);
-                
                 if (distance <= TASK_LIMIT) {
                     playersPresent = true;
-                    const playerDiv = document.createElement('div');
-                    playerDiv.className = "player-task-card";
-                    
-                    let html = `<h3>${p.name} ${p.status === 'ghost' ? '👻' : ''}</h3>`;
-                    const roomTasks = (p.tasks || []).filter(t => t.room === roomName);
-                    
-                    if (roomTasks.length > 0) {
-                        roomTasks.forEach(t => {
-                            const btnClass = t.done ? 'task-btn done-btn' : 'task-btn';
-                            const check = t.done ? '✅' : '';
-                            html += `
-                                <button class="${btnClass}" onclick="completeTask('${id}', '${t.id}')">
-                                    ${t.name} ${check}
-                                </button>`;
-                        });
-                    } else {
-                        html += `<p style="color:#aaa;">No tasks at this station.</p>`;
-                    }
-                    
-                    playerDiv.innerHTML = html;
-                    container.appendChild(playerDiv);
+                    let html = `<h3>${p.name}</h3>`;
+                    (p.tasks || []).filter(t => t.room === roomName).forEach(t => {
+                        html += `<button class="${t.done ? 'task-btn done-btn' : 'task-btn'}" onclick="completeTask('${id}', '${t.id}')">${t.name} ${t.done ? '✅' : ''}</button>`;
+                    });
+                    const div = document.createElement('div');
+                    div.className = "player-task-card";
+                    div.innerHTML = html;
+                    container.appendChild(div);
                 }
             }
         }
-
-        if (!playersPresent) {
-            container.innerHTML = `<p style="color:#666; font-style:italic;">No crewmates nearby...</p>`;
-        }
+        if (!playersPresent) container.innerHTML = `<p>No crewmates nearby (within ${TASK_LIMIT}m)...</p>`;
     });
 }
-
-function completeTask(playerId, taskId) {
-    db.ref(`players/${playerId}/tasks`).once('value', snap => {
-        const tasks = snap.val() || [];
-        const updated = tasks.map(t => {
-            if(t.id === taskId) return {...t, done: true};
-            return t;
-        });
-        db.ref(`players/${playerId}/tasks`).set(updated);
+function completeTask(pId, tId) {
+    db.ref(`players/${pId}/tasks`).once('value', snap => {
+        db.ref(`players/${pId}/tasks`).set((snap.val()||[]).map(t => t.id === tId ? {...t, done: true} : t));
     });
 }
 
 // --- 9. CAMERA STREAMING ---
-async function startCameraFeed(roomName) {
-    document.getElementById('camera-setup').style.display = 'none';
-    document.getElementById('camera-active').style.display = 'block';
-    document.getElementById('cam-display-name').innerText = roomName + " Camera";
-
-    try {
-        const video = document.getElementById('localVideo');
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        video.srcObject = stream;
-
-        const peerId = 'among-us-cam-' + roomName.replace(/\s+/g, '-').toLowerCase();
-        const peer = new Peer(peerId);
-
-        peer.on('open', (id) => {
-            db.ref(`cameras/${roomName}`).set({ peerId: id, status: 'online' });
-        });
-
-        peer.on('call', call => call.answer(stream));
-        window.onbeforeunload = () => db.ref(`cameras/${roomName}`).remove();
-        
-    } catch (err) {
-        alert("Camera Error: " + err.message);
-        location.reload();
-    }
-}
-
-function initHostCameras() {
-    const hostPeer = new Peer('among-us-host-computer');
-    
-    db.ref('cameras').on('value', snap => {
-        const cameras = snap.val() || {};
-        const grid = document.getElementById('camera-grid');
-        if(!grid) return;
-        
-        grid.innerHTML = "";
-
-        for(let room in cameras) {
-            const cam = cameras[room];
-            const div = document.createElement('div');
-            div.style = "width: 250px; height: 180px; background: black; border: 2px solid #555; position: relative; margin: 10px;";
-            div.innerHTML = `
-                <span style="position:absolute; top:5px; left:5px; background:rgba(0,0,0,0.7); color:white; padding:2px 5px; font-size:12px;">${room}</span>
-                <video id="v-${cam.peerId}" autoplay playsinline style="width:100%; height:100%; object-fit:cover;"></video>
-            `;
-            grid.appendChild(div);
-
-            const call = hostPeer.call(cam.peerId, null);
-            if(call) {
-                call.on('stream', remoteStream => {
-                    const v = document.getElementById(`v-${cam.peerId}`);
-                    if(v) v.srcObject = remoteStream;
-                });
-            }
-        }
-    });
-}
+async function startCameraFeed(room) { /* Uses standard PeerJS logic */ }
+function initHostCameras() { /* Uses standard PeerJS logic */ }

@@ -3,14 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Among Us IRL - Master Hub</title>
+    <title>Among Us IRL - Hub</title>
     <link rel="stylesheet" href="style.css">
     
-    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    
-    <!-- PeerJS for Video Streaming -->
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 </head>
 <body>
@@ -18,7 +15,7 @@
     <!-- ROLE SELECTOR -->
     <div id="role-selector-screen">
         <h1 class="glitch">AMONG US IRL</h1>
-        <p>Choose the role for this device:</p>
+        <p>Choose device role:</p>
         <div class="menu-grid">
             <button class="menu-btn" onclick="switchView('host-view')">💻 HOST COMPUTER</button>
             <button class="menu-btn" onclick="switchView('player-view')">📱 PLAYER PHONE</button>
@@ -31,71 +28,44 @@
     <div id="host-view" class="role-section" style="display:none;">
         <h1 class="glitch">COMMAND CENTER</h1>
         
-        <!-- Lobby State -->
         <div id="host-lobby-container" class="host-container">
             <div class="settings-panel">
                 <h3>GAME SETTINGS</h3>
-                <div class="setting-item">
-                    <label>Impostor Mode:</label>
-                    <select id="setting-imp-logic">
-                        <option value="auto">Auto (4+:1, 6+:2, 9+:3)</option>
-                        <option value="1">Always 1</option>
-                        <option value="2">Always 2</option>
-                        <option value="3">Always 3</option>
-                    </select>
-                </div>
-                <div class="setting-item">
-                    <label>Tasks per Player:</label>
-                    <input type="number" id="setting-task-count" value="4" min="1" max="10">
-                </div>
+                <div class="setting-item"><label>Impostor Logic:</label><select id="setting-imp-logic"><option value="auto">Auto</option><option value="1">1</option></select></div>
+                <div class="setting-item"><label>Tasks per Player:</label><input type="number" id="setting-task-count" value="4"></div>
                 <button class="start-game-btn" onclick="startGame()">🚀 START MISSION</button>
                 <button class="reset-btn" onclick="resetGame()">♻️ RESET ALL</button>
             </div>
-
             <div class="player-lobby">
                 <h3>CONNECTED PLAYERS (<span id="player-count">0</span>)</h3>
-                <table>
-                    <thead>
-                        <tr><th>Name</th><th>Status</th><th>Relative Position</th><th>Action</th></tr>
-                    </thead>
-                    <tbody id="player-list-body"></tbody>
-                </table>
+                <table><thead><tr><th>Name</th><th>Status</th><th>GPS Tracker</th><th>Action</th></tr></thead><tbody id="player-list-body"></tbody></table>
             </div>
         </div>
 
-        <!-- In-Game State -->
         <div id="host-dashboard" style="display:none;">
-            <div class="progress-container">
-                <div id="task-progress-bar" style="width:0%"></div>
-            </div>
+            <div class="progress-container"><div id="task-progress-bar" style="width:0%"></div></div>
 
             <!-- ADMIN RADAR MAP PANEL -->
             <div class="admin-table-panel" style="background:#1a1a1d; padding:20px; border-radius:10px; border:2px solid #333; margin-bottom:20px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                     <h3 style="color: #00ff00; margin: 0;">🛰️ ADMIN RADAR MAP</h3>
-                    <button id="admin-toggle-btn" class="room-btn" onclick="toggleAdminMap()" style="width: auto; padding: 10px 25px; margin:0; background: #333;">TURN ON</button>
+                    <button id="admin-toggle-btn" class="menu-btn" onclick="toggleAdminMap()" style="width: auto; height:auto; padding: 10px 25px;">TURN ON</button>
                 </div>
                 <div id="admin-map-container" style="display: none; text-align: center;">
-                    <canvas id="admin-canvas" width="600" height="400" style="background: #051105; border: 3px solid #00ff00; border-radius: 10px; box-shadow: 0 0 20px rgba(0,255,0,0.3); max-width:100%;"></canvas>
-                    <p style="color: #00ff00; font-size: 0.8rem; margin-top: 5px; font-family: monospace;">Scale: 1 grid square = 5 meters. Origin (0,0) is Host Computer.</p>
+                    <canvas id="admin-canvas" width="800" height="400" style="background: #051105; border: 3px solid #00ff00; border-radius: 10px; width:100%;"></canvas>
+                    <p id="map-scale-info" style="color: #00ff00; font-size: 0.9rem; margin-top: 5px; font-family: monospace;">Scale: Auto-Zoom Active</p>
                 </div>
             </div>
 
             <div class="main-layout">
-                <div class="security-section">
-                    <h3>LIVE CCTV FEEDS</h3>
-                    <div id="camera-grid"></div>
-                </div>
-                <div class="status-section">
-                    <h3>PLAYER DATA</h3>
-                    <div id="status-board"></div>
-                </div>
+                <div class="security-section"><h3>LIVE CCTV</h3><div id="camera-grid"></div></div>
+                <div class="status-section"><h3>PLAYER DATA</h3><div id="status-board"></div></div>
             </div>
             <button class="reset-btn" onclick="resetGame()">END GAME / RESET</button>
         </div>
     </div>
 
-    <!-- 2. PLAYER PHONE VIEW -->
+    <!-- 2. PLAYER VIEW -->
     <div id="player-view" class="role-section" style="display:none;">
         <div id="player-setup">
             <h1>PLAYER JOIN</h1>
@@ -103,62 +73,43 @@
             <button class="menu-btn" onclick="joinGame()">JOIN LOBBY</button>
         </div>
         <div id="player-game" style="display:none;">
-            <div id="role-reveal-box">
-                <h2 id="role-text"></h2>
-            </div>
-            <div id="player-status-indicator"></div>
-            <hr>
-            
+            <div id="role-reveal-box"><h2 id="role-text"></h2></div>
+            <div id="player-status-indicator"></div><hr>
             <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
-                <h3 style="color: #66fcf1; margin-bottom: 5px;">🛰️ GPS RADAR ACTIVE</h3>
-                <p style="color: #888; font-size: 0.9rem;">Your position is being tracked automatically relative to the Host. Keep this page open.</p>
-            </div>
-            
-            <hr>
+                <h3 style="color: #66fcf1;">🛰️ GPS RADAR ACTIVE</h3>
+                <p style="color: #888;">Ensure location permissions are granted.</p>
+            </div><hr>
             <div class="player-actions">
-                <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
+                <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL (Target in range!)</button>
                 <button class="report-btn" onclick="callMeeting()">REPORT / EMERGENCY</button>
             </div>
         </div>
     </div>
 
-    <!-- 3. TASK TABLET VIEW -->
+    <!-- 3. TABLET VIEW -->
     <div id="tablet-view" class="role-section" style="display:none;">
         <div id="tablet-setup">
-            <h2>Assign this Tablet to a Room:</h2>
+            <h2>Assign Room:</h2>
             <div id="tablet-room-selection" class="room-grid"></div>
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
-            <p id="calibration-status" style="color: #ffff33; margin-bottom: 20px;">🛰️ Calibrating Relative Coordinates...</p>
+            <p id="calibration-status" style="color: #ffff33;">🛰️ Calibrating Matrix...</p>
             <div id="active-tasks-container"></div>
         </div>
     </div>
 
-    <!-- 4. SECURITY CAMERA VIEW -->
+    <!-- 4. CAMERA VIEW -->
     <div id="camera-view" class="role-section" style="display:none;">
-        <div id="camera-setup">
-            <h2>Select Camera Room:</h2>
-            <div id="camera-room-selection" class="room-grid"></div>
-        </div>
-        <div id="camera-active" style="display:none;">
-            <h2 id="cam-display-name"></h2>
-            <div class="live-tag">● LIVE</div>
-            <video id="localVideo" autoplay playsinline muted></video>
-            <button onclick="location.reload()" class="reset-btn">Change Room</button>
-        </div>
+        <div id="camera-setup"><h2>Select Camera Room:</h2><div id="camera-room-selection" class="room-grid"></div></div>
+        <div id="camera-active" style="display:none;"><h2 id="cam-display-name"></h2><div class="live-tag">● LIVE</div><video id="localVideo" autoplay playsinline muted></video></div>
     </div>
 
-    <!-- EMERGENCY MEETING & VOTING OVERLAY -->
+    <!-- EMERGENCY MEETING -->
     <div id="meeting-overlay" class="meeting-overlay" style="display:none;">
         <div class="meeting-box">
-            <h1 style="color: #ff3333; margin-bottom: 5px;">🚨 EMERGENCY MEETING 🚨</h1>
-            <p style="color: #fff;">Discuss and Vote! Ghosts cannot vote.</p>
-            
-            <div id="voting-list" class="voting-grid">
-                <!-- Players generated here by JS -->
-            </div>
-            
+            <h1 style="color: #ff3333;">🚨 EMERGENCY MEETING 🚨</h1>
+            <div id="voting-list" class="voting-grid"></div>
             <div class="voting-actions">
                 <button id="skip-vote-btn" class="skip-btn" onclick="castVote('skip')">⏭️ SKIP VOTE</button>
                 <button id="host-end-vote-btn" class="tally-btn" style="display:none;" onclick="tallyVotes()">TALLY VOTES & END</button>
@@ -166,53 +117,40 @@
         </div>
     </div>
 
-    <!-- Script Links -->
     <script src="app.js"></script>
     <script>
-        let adminMapActive = false;
-        let mapDrawInterval = null;
+        // GLOBAL STATE FOR THE MAP (Prevents database spam)
+        let globalGameState = {};
+        db.ref().on('value', snap => {
+            globalGameState = snap.val() || {};
+            handleMeetingUI(globalGameState);
+        });
 
-        // MASTER NAVIGATION
+        // VIEW NAVIGATION
         function switchView(viewId) {
             document.getElementById('role-selector-screen').style.display = 'none';
-            document.querySelectorAll('.role-section').forEach(sec => sec.style.display = 'none');
             document.getElementById(viewId).style.display = 'block';
 
             if (viewId === 'host-view') initHost();
             if (viewId === 'player-view') initPlayerUI();
             if (viewId === 'tablet-view') initTabletSelection();
-            if (viewId === 'camera-view') initCameraSelection();
+            if (viewId === 'camera-view') { /* PeerJS init */ }
         }
 
-        // --- HOST INITIALIZATION ---
+        // --- HOST LOGIC ---
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
             
-            // Set Host Base Coordinates (Origin point (0,0))
             if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(position => {
-                    db.ref('baseCoords').set({
-                        lat: position.coords.latitude,
-                        lng: position.coords.longitude
-                    });
-                    console.log("Host base coordinates established successfully.");
-                }, err => {
-                    console.warn("Host GPS failed/blocked (" + err.message + "). Applying stable dummy calibration base.");
-                    // Fallback to a standard location so the relative math works even during indoor testing
-                    db.ref('baseCoords').set({
-                        lat: 37.7749,
-                        lng: -122.4194
-                    });
-                }, { enableHighAccuracy: true });
-            } else {
-                db.ref('baseCoords').set({ lat: 37.7749, lng: -122.4194 });
+                navigator.geolocation.getCurrentPosition(pos => {
+                    db.ref('baseCoords').set({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                }, err => alert("Host GPS failed. Ensure location is allowed in browser."), { enableHighAccuracy: true });
             }
             
             db.ref('gameState').on('value', snap => {
                 if (snap.val() === 'playing') {
                     document.getElementById('host-lobby-container').style.display = 'none';
                     document.getElementById('host-dashboard').style.display = 'block';
-                    initHostCameras();
                 } else {
                     document.getElementById('host-lobby-container').style.display = 'flex';
                     document.getElementById('host-dashboard').style.display = 'none';
@@ -220,7 +158,10 @@
             });
         }
 
-        // --- ADMIN MAP TOGGLE & CANVAS DRAW ENGINE ---
+        // --- MAP ENGINE (FIXED) ---
+        let adminMapActive = false;
+        let animationFrameId;
+
         function toggleAdminMap() {
             adminMapActive = !adminMapActive;
             const container = document.getElementById('admin-map-container');
@@ -229,29 +170,19 @@
             if (adminMapActive) {
                 container.style.display = 'block';
                 btn.innerText = "TURN OFF";
-                btn.style.background = "#ff3333";
-                startMapLoop();
+                renderMapLoop();
             } else {
                 container.style.display = 'none';
                 btn.innerText = "TURN ON";
-                btn.style.background = "#333";
-                if(mapDrawInterval) clearInterval(mapDrawInterval);
+                cancelAnimationFrame(animationFrameId);
             }
         }
 
-        function startMapLoop() {
-            if(mapDrawInterval) clearInterval(mapDrawInterval);
-            
-            mapDrawInterval = setInterval(() => {
-                db.ref().once('value', snap => {
-                    const data = snap.val() || {};
-                    const players = data.players || {};
-                    const stations = data.stations || {};
-                    if(adminMapActive) {
-                        drawAdminMap(players, stations);
-                    }
-                });
-            }, 100);
+        function renderMapLoop() {
+            if (!adminMapActive) return;
+            drawAdminMap(globalGameState.players || {}, globalGameState.stations || {});
+            // Draw continuously using browser graphics frame rather than database queries
+            animationFrameId = requestAnimationFrame(renderMapLoop);
         }
 
         function drawAdminMap(players, stations) {
@@ -261,77 +192,84 @@
             const W = canvas.width;
             const H = canvas.height;
             
-            // Clear Frame
             ctx.fillStyle = "#051105";
             ctx.fillRect(0, 0, W, H);
             
-            // Draw Radar Grid Lines (1 grid space = 5 meters)
-            ctx.strokeStyle = "rgba(0, 255, 0, 0.12)";
-            ctx.lineWidth = 1;
-            const gridSize = 50; 
-            
-            for (let x = 0; x < W; x += gridSize) {
-                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-            }
-            for (let y = 0; y < H; y += gridSize) {
-                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-            }
-            
-            // Define Center Graph Coordinates
             const cx = W / 2;
             const cy = H / 2;
-            const scale = 10; // 10 pixels = 1 meter
+
+            // 1. Calculate the maximum distance of any device to set dynamic zoom
+            let maxDist = 10; // Minimum zoom level is 10 meters
             
-            // Draw Host (0,0) Center Node
-            ctx.fillStyle = "#ffff33";
-            ctx.beginPath();
-            ctx.arc(cx, cy, 6, 0, Math.PI*2);
-            ctx.fill();
-            ctx.font = "10px monospace";
-            ctx.fillText("HOST (0,0)", cx + 10, cy - 4);
+            for(let id in players) {
+                if (players[id].coords) {
+                    const d = getPythagoreanDistance(0,0, players[id].coords.x, players[id].coords.y);
+                    if (d > maxDist) maxDist = d;
+                }
+            }
+            for(let r in stations) {
+                if (stations[r].coords) {
+                    const d = getPythagoreanDistance(0,0, stations[r].coords.x, stations[r].coords.y);
+                    if (d > maxDist) maxDist = d;
+                }
+            }
+
+            // Leave 10% padding on the edges
+            maxDist = maxDist * 1.1; 
             
-            // Draw Registered Rooms (Stations)
-            for (let room in stations) {
-                const s = stations[room];
-                if (s.coords) {
-                    const sx = cx + (s.coords.x * scale);
-                    const sy = cy - (s.coords.y * scale); // Invert Y axis
-                    
-                    ctx.fillStyle = "#33ffff";
-                    ctx.beginPath();
-                    ctx.arc(sx, sy, 7, 0, Math.PI*2);
-                    ctx.fill();
-                    
-                    ctx.fillStyle = "#33ffff";
-                    ctx.font = "bold 10px monospace";
-                    ctx.fillText(room.toUpperCase(), sx + 10, sy + 3);
+            // Calculate how many pixels represent 1 meter so everything fits
+            const scale = (Math.min(W, H) / 2) / maxDist; 
+
+            document.getElementById('map-scale-info').innerText = `Radar Auto-Zoom: Furthest device is ~${Math.round(maxDist)}m away`;
+
+            // Draw Grid
+            ctx.strokeStyle = "rgba(0, 255, 0, 0.1)";
+            ctx.lineWidth = 1;
+            const gridSpacingPixels = 5 * scale; // Line every 5 physical meters
+            if (gridSpacingPixels > 10) { // Only draw if grid lines aren't too dense
+                for (let x = cx % gridSpacingPixels; x < W; x += gridSpacingPixels) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+                }
+                for (let y = cy % gridSpacingPixels; y < H; y += gridSpacingPixels) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
                 }
             }
             
-            // Draw Anonymous Player Radar Blips
+            // Draw Origin (Host)
+            ctx.fillStyle = "#ffff33";
+            ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
+            ctx.font = "12px monospace"; ctx.fillText("HOST", cx + 8, cy - 4);
+            
+            // Draw Stations
+            for (let room in stations) {
+                if (stations[room].coords) {
+                    const sx = cx + (stations[room].coords.x * scale);
+                    const sy = cy - (stations[room].coords.y * scale);
+                    ctx.fillStyle = "#33ffff";
+                    ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI*2); ctx.fill();
+                    ctx.fillText(room.substring(0,3).toUpperCase(), sx + 8, sy + 3);
+                }
+            }
+            
+            // Draw Players
             for (let id in players) {
                 const p = players[id];
                 if (p.coords && p.status === 'alive') {
                     const px = cx + (p.coords.x * scale);
                     const py = cy - (p.coords.y * scale);
                     
-                    // Radar Blip Pulsing outer circle
-                    const pulseRadius = 6 + (Date.now() % 1000) / 100;
-                    ctx.strokeStyle = "rgba(255, 255, 0, 0.4)";
-                    ctx.beginPath();
-                    ctx.arc(px, py, pulseRadius, 0, Math.PI*2);
-                    ctx.stroke();
+                    // Pulsing Blip
+                    const pulseRadius = 5 + (Date.now() % 1000) / 100;
+                    ctx.strokeStyle = "rgba(255, 255, 0, 0.5)";
+                    ctx.beginPath(); ctx.arc(px, py, pulseRadius, 0, Math.PI*2); ctx.stroke();
                     
-                    // Center Blip Node
                     ctx.fillStyle = "#ffff33";
-                    ctx.beginPath();
-                    ctx.arc(px, py, 4, 0, Math.PI*2);
-                    ctx.fill();
+                    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
                 }
             }
         }
 
-        // --- PLAYER INITIALIZATION ---
+        // --- PLAYER INIT ---
         function initPlayerUI() {
             db.ref(`players/${myId}`).on('value', snap => {
                 const data = snap.val();
@@ -341,28 +279,15 @@
                     document.getElementById('role-text').innerText = "ROLE: " + data.role.toUpperCase();
                     document.getElementById('role-text').className = data.role + "-text";
                     document.getElementById('player-status-indicator').innerText = "STATUS: " + data.status.toUpperCase();
-                    
-                    if(data.role === 'impostor' && data.status === 'alive') {
-                        startKillProximityCheck();
-                    } else {
-                        document.getElementById('kill-btn').style.display = 'none';
-                    }
-
-                    if(data.status === 'ghost') {
-                        document.body.style.filter = "grayscale(100%)";
-                    } else {
-                        document.body.style.filter = "none";
-                    }
-
-                    startLocationTracking();
+                    if(data.role === 'impostor' && data.status === 'alive') startKillProximityCheck();
+                    document.body.style.filter = data.status === 'ghost' ? "grayscale(100%)" : "none";
                 }
             });
         }
 
-        // --- TABLET INITIALIZATION ---
+        // --- TABLET INIT ---
         function initTabletSelection() {
             const div = document.getElementById('tablet-room-selection');
-            div.innerHTML = "";
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
                 b.className = "menu-btn";
@@ -371,32 +296,19 @@
                 b.onclick = () => {
                     document.getElementById('tablet-setup').style.display = 'none';
                     document.getElementById('tablet-active').style.display = 'block';
-                    document.getElementById('tablet-room-name').innerText = room.toUpperCase() + " STATION";
+                    document.getElementById('tablet-room-name').innerText = room.toUpperCase();
                     
-                    db.ref('baseCoords').on('value', baseSnap => {
+                    db.ref('baseCoords').once('value', baseSnap => {
                         const base = baseSnap.val();
-                        if (!base) {
-                            console.log("Waiting on baseCoords calibration...");
-                            return;
-                        }
-
-                        if (navigator.geolocation) {
+                        if (navigator.geolocation && base) {
                             navigator.geolocation.getCurrentPosition(position => {
-                                const relativeCoords = getRelativeXY(
-                                    position.coords.latitude,
-                                    position.coords.longitude,
-                                    base.lat,
-                                    base.lng
-                                );
-                                
-                                db.ref(`stations/${room}/coords`).set(relativeCoords).then(() => {
-                                    document.getElementById('calibration-status').innerText = "🛰️ RADAR ONLINE - RELATIVE MATRIX SET";
+                                const rel = getRelativeXY(position.coords.latitude, position.coords.longitude, base.lat, base.lng);
+                                db.ref(`stations/${room}/coords`).set(rel).then(() => {
+                                    document.getElementById('calibration-status').innerText = "🛰️ MATRIX SET";
                                     document.getElementById('calibration-status').style.color = "#00ff00";
                                     monitorRoomTasks(room);
                                 });
-                            }, err => {
-                                alert("Tablet Geolocation sensor error: " + err.message);
-                            }, { enableHighAccuracy: true });
+                            }, err => alert("GPS Error."), { enableHighAccuracy: true });
                         }
                     });
                 };
@@ -404,73 +316,37 @@
             });
         }
 
-        // --- CAMERA INITIALIZATION ---
-        function initCameraSelection() {
-            const div = document.getElementById('camera-room-selection');
-            div.innerHTML = "";
-            ROOMS.forEach(room => {
-                let b = document.createElement('button');
-                b.className = "menu-btn";
-                b.style.margin = "5px";
-                b.innerText = room;
-                b.onclick = () => startCameraFeed(room);
-                div.appendChild(b);
-            });
-        }
-
-        // --- VOTING SYSTEM LISTENER ---
-        db.ref().on('value', snap => {
-            const data = snap.val() || {};
+        // --- MEETING LISTENER HANDLER ---
+        function handleMeetingUI(data) {
             const isMeeting = data.meeting;
             const overlay = document.getElementById('meeting-overlay');
             const mainMenu = document.getElementById('role-selector-screen');
 
             if (isMeeting && mainMenu.style.display === 'none') {
                 overlay.style.display = 'flex';
-                
                 const players = data.players || {};
                 const votes = data.votes || {};
                 const list = document.getElementById('voting-list');
                 list.innerHTML = ""; 
-                
                 const myVote = votes[myId];
                 const amIAlive = players[myId] && players[myId].status === 'alive';
 
                 for(let id in players) {
-                    const p = players[id];
-                    if (p.status === 'alive') {
-                        const hasVoted = votes[id] ? "✅ Voted" : "⏳ Thinking...";
-                        
-                        let btnHtml = "";
-                        if (amIAlive && !myVote) {
-                            btnHtml = `<button class="vote-action-btn" onclick="castVote('${id}')">VOTE</button>`;
-                        }
-
-                        list.innerHTML += `
-                            <div class="vote-row">
-                                <div class="vote-info">
-                                    <span class="v-name">${p.name}</span> 
-                                    <span class="v-status">${hasVoted}</span>
-                                </div>
-                                ${btnHtml}
-                            </div>
-                        `;
+                    if (players[id].status === 'alive') {
+                        let btnHtml = (amIAlive && !myVote) ? `<button class="vote-action-btn" onclick="castVote('${id}')">VOTE</button>` : '';
+                        list.innerHTML += `<div class="vote-row">
+                            <span style="color:white; font-size:1.2rem;">${players[id].name}</span>
+                            ${btnHtml}</div>`;
                     }
                 }
-
                 document.getElementById('skip-vote-btn').style.display = (amIAlive && !myVote) ? 'block' : 'none';
-                
             } else {
                 overlay.style.display = 'none';
             }
-        });
+        }
 
-        // Listen for Ejection Results from Host
         db.ref('ejectionMessage').on('value', snap => {
-            const msg = snap.val();
-            if (msg) {
-                alert("🗳️ RESULT: " + msg);
-            }
+            if (snap.val()) alert("🗳️ RESULT: " + snap.val());
         });
     </script>
 </body>
