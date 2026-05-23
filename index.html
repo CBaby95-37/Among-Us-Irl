@@ -58,18 +58,6 @@
         <div id="host-dashboard" style="display:none;">
             <div class="progress-container"><div id="task-progress-bar" style="width:0%"></div></div>
 
-            <!-- ADMIN RADAR MAP PANEL -->
-            <div class="admin-table-panel" style="background:#1a1a1d; padding:20px; border-radius:10px; border:2px solid #333; margin-bottom:20px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h3 style="color: #00ff00; margin: 0;">🛰️ ADMIN RADAR MAP</h3>
-                    <button id="admin-toggle-btn" class="menu-btn" onclick="toggleAdminMap()" style="width: auto; height:auto; padding: 10px 25px;">TURN ON</button>
-                </div>
-                <div id="admin-map-container" style="display: none; text-align: center;">
-                    <canvas id="admin-canvas" width="800" height="400" style="background: #051105; border: 3px solid #00ff00; border-radius: 10px; width:100%;"></canvas>
-                    <p id="map-scale-info" style="color:#00ff00; font-family:monospace; font-size:0.8rem; margin-top:5px;">DGPS Radar Active</p>
-                </div>
-            </div>
-
             <div class="main-layout">
                 <div class="status-section" style="width: 100%;"><h3>PLAYER DATA</h3><div id="status-board"></div></div>
             </div>
@@ -83,17 +71,15 @@
             <h1>PLAYER JOIN</h1>
             <input type="text" id="playerNameInput" placeholder="Your Name...">
             <button class="menu-btn" onclick="joinGame()">JOIN LOBBY</button>
+            <p style="color:#aaa; font-size:0.85rem; margin-top: 15px;">Note: Allows browser microphone permissions so proximity detection can run offline.</p>
         </div>
         <div id="player-game" style="display:none;">
             <div id="role-reveal-box"><h2 id="role-text"></h2></div>
             <div id="player-status-indicator"></div><hr>
             
             <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
-                <h3 style="color: #66fcf1;">🛰️ SENSOR FUSION TRACKER</h3>
-                <p id="radar-status-text" style="color: #00ff00; font-size: 1.1rem; font-weight:bold; margin-top:10px;">Calibrating...</p>
-                
-                <button onclick="calibratePosition()" style="background:#45a29e; color:#111; padding:10px; width:100%; margin-top:15px; font-weight:bold; border-radius:5px; border:none;">🎯 SYNC TO NEAREST BEACON</button>
-                <p style="color:#888; font-size:0.8rem; margin-top:5px;">Stand next to the Host Computer or any Tablet and click to instantly snap/re-calibrate tracking offsets.</p>
+                <h3 style="color: #66fcf1;">📡 ACOUSTIC RADAR ACTIVE</h3>
+                <p id="radar-status-text" style="color: #00ff00; font-size: 1.1rem; font-weight:bold; margin-top:10px;">Scanning for Station Beacons...</p>
             </div><hr>
             
             <div class="player-actions">
@@ -106,28 +92,14 @@
     <!-- 3. TASK TABLET VIEW -->
     <div id="tablet-view" class="role-section" style="display:none;">
         <div id="tablet-setup">
-            <h2>Assign Room & Position:</h2>
-            
-            <!-- OPTION A: MANUAL COORDINATES -->
-            <div style="background:#111; padding:20px; margin-bottom:15px; border-radius:10px; text-align:left;">
-                <h3 style="color:#45a29e; margin-bottom:10px;">Option A: Manual Location</h3>
-                <input type="number" id="manual-x" placeholder="X Coordinate (meters)" step="0.1">
-                <input type="number" id="manual-y" placeholder="Y Coordinate (meters)" step="0.1">
+            <h2>Select Station Room:</h2>
+            <div id="tablet-room-selection" class="room-grid">
+                <!-- Select room directly, coordinates are handled by frequency separation! -->
             </div>
-
-            <!-- OPTION B: GPS AUTO CALIBRATION -->
-            <div style="background:#111; padding:20px; margin-bottom:15px; border-radius:10px; text-align:left;">
-                <h3 style="color:#45a29e; margin-bottom:10px;">Option B: Auto GPS Calibration</h3>
-                <p style="color:#888; font-size:0.85rem; margin-bottom:10px;">Hold this tablet in the exact physical spot you want the task station to be, and click below:</p>
-                <button onclick="calibrateTabletAnchor()" class="start-game-btn" style="margin: 0; padding: 12px; background: #333; color: #fff; border: 1px solid #555;">🎯 RUN AUTO-CALIBRATION</button>
-            </div>
-            
-            <h3 style="margin-top:20px;">Now, Select Room for Tablet:</h3>
-            <div id="tablet-room-selection" class="room-grid"></div>
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
-            <p id="calibration-status" style="color: #00ff00;">🛰️ Station Online. Tracking nearby players...</p>
+            <p id="calibration-status" style="color: #00ff00; margin-bottom: 20px;">🔊 BEACON BROADCAST ONLINE</p>
             <div id="active-tasks-container"></div>
         </div>
     </div>
@@ -147,7 +119,6 @@
     <script src="app.js"></script>
     <script>
         let globalGameState = {};
-        let localTabletCoords = null;
         let wakeLock = null;
 
         db.ref().on('value', snap => {
@@ -160,7 +131,6 @@
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    console.log("Screen Wake Lock is active. Device will not sleep.");
                 }
             } catch (err) {
                 console.warn(`Screen Wake Lock failed: ${err.message}`);
@@ -199,28 +169,8 @@
         // --- HOST INITIALIZATION ---
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
-            
             const joinUrl = window.location.origin + window.location.pathname;
             document.getElementById('lobby-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(joinUrl)}`;
-
-            // Set Host Base Coordinates (True Origin)
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(position => {
-                    const baseLat = position.coords.latitude;
-                    const baseLng = position.coords.longitude;
-                    
-                    db.ref('baseCoords').set({ lat: baseLat, lng: baseLng });
-                    
-                    navigator.geolocation.watchPosition(livePos => {
-                        const driftLat = livePos.coords.latitude - baseLat;
-                        const driftLng = livePos.coords.longitude - baseLng;
-                        db.ref('gpsDrift').set({ lat: driftLat, lng: driftLng });
-                    }, null, { enableHighAccuracy: true, maximumAge: 0 });
-
-                }, err => {
-                    db.ref('baseCoords').set({ lat: 37.7749, lng: -122.4194 });
-                }, { enableHighAccuracy: true });
-            }
             
             db.ref('gameState').on('value', snap => {
                 if (snap.val() === 'playing') {
@@ -231,108 +181,6 @@
                     document.getElementById('host-dashboard').style.display = 'none';
                 }
             });
-        }
-
-        // --- ADMIN MAP RENDERING LOOP ---
-        let adminMapActive = false;
-        let animationFrameId;
-
-        function toggleAdminMap() {
-            adminMapActive = !adminMapActive;
-            const container = document.getElementById('admin-map-container');
-            const btn = document.getElementById('admin-toggle-btn');
-            
-            if (adminMapActive) {
-                container.style.display = 'block';
-                btn.innerText = "TURN OFF";
-                renderMapLoop();
-            } else {
-                container.style.display = 'none';
-                btn.innerText = "TURN ON";
-                cancelAnimationFrame(animationFrameId);
-            }
-        }
-
-        function renderMapLoop() {
-            if (!adminMapActive) return;
-            drawAdminMap(globalGameState.players || {}, globalGameState.stations || {});
-            animationFrameId = requestAnimationFrame(renderMapLoop);
-        }
-
-        function drawAdminMap(players, stations) {
-            const canvas = document.getElementById('admin-canvas');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            const W = canvas.width;
-            const H = canvas.height;
-            
-            ctx.fillStyle = "#051105";
-            ctx.fillRect(0, 0, W, H);
-            
-            const cx = W / 2;
-            const cy = H / 2;
-            let maxDist = 5; 
-            
-            for(let id in players) {
-                if (players[id].coords) {
-                    const d = getPythagoreanDistance(0,0, players[id].coords.x, players[id].coords.y);
-                    if (d > maxDist) maxDist = d;
-                }
-            }
-            for(let r in stations) {
-                if (stations[r].coords) {
-                    const d = getPythagoreanDistance(0,0, stations[r].coords.x, stations[r].coords.y);
-                    if (d > maxDist) maxDist = d;
-                }
-            }
-
-            maxDist = maxDist * 1.2; 
-            const scale = (Math.min(W, H) / 2) / maxDist; 
-
-            // Grid Layout
-            ctx.strokeStyle = "rgba(0, 255, 0, 0.1)";
-            ctx.lineWidth = 1;
-            const gridSpacingPixels = 5 * scale;
-            if (gridSpacingPixels > 5) {
-                for (let x = cx % gridSpacingPixels; x < W; x += gridSpacingPixels) {
-                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-                }
-                for (let y = cy % gridSpacingPixels; y < H; y += gridSpacingPixels) {
-                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-                }
-            }
-            
-            // Host Origin Icon
-            ctx.fillStyle = "#ffff33";
-            ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
-            ctx.font = "12px monospace"; ctx.fillText("HOST(0,0)", cx + 8, cy - 4);
-            
-            // Tablets
-            for (let room in stations) {
-                if (stations[room].coords) {
-                    const sx = cx + (stations[room].coords.x * scale);
-                    const sy = cy - (stations[room].coords.y * scale);
-                    ctx.fillStyle = "#33ffff";
-                    ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI*2); ctx.fill();
-                    ctx.fillText(room.substring(0,3).toUpperCase(), sx + 8, sy + 3);
-                }
-            }
-            
-            // Active Players
-            for (let id in players) {
-                const p = players[id];
-                if (p.coords && p.status === 'alive') {
-                    const px = cx + (p.coords.x * scale);
-                    const py = cy - (p.coords.y * scale);
-                    
-                    const pulseRadius = 5 + (Date.now() % 1000) / 100;
-                    ctx.strokeStyle = "rgba(255, 255, 0, 0.5)";
-                    ctx.beginPath(); ctx.arc(pulseRadius, 0, Math.PI*2); ctx.stroke();
-                    
-                    ctx.fillStyle = "#ffff33";
-                    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
-                }
-            }
         }
 
         // --- PLAYER UI ---
@@ -351,64 +199,28 @@
             });
         }
 
-        // --- TABLET UI AND CALIBRATION ENGINE ---
-        function calibrateTabletAnchor() {
-            db.ref().once('value', baseSnap => {
-                const data = baseSnap.val() || {};
-                const base = data.baseCoords;
-                const drift = data.gpsDrift || { lat: 0, lng: 0 };
-
-                if (!base) {
-                    alert("Host is not set up! Turn on Host computer first.");
-                    return;
-                }
-
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(position => {
-                        const correctedLat = position.coords.latitude - drift.lat;
-                        const correctedLng = position.coords.longitude - drift.lng;
-
-                        localTabletCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
-                        
-                        alert("Auto-Calibration Completed! Coordinates stored locally. Now, select your room below.");
-                    }, err => alert("Calibration Error: " + err.message), { enableHighAccuracy: true });
-                }
-            });
-        }
-
+        // --- TABLET UI SETUP ---
         function initTabletSelection() {
             const div = document.getElementById('tablet-room-selection');
+            div.innerHTML = "";
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
                 b.className = "menu-btn";
                 b.style.margin = "5px";
                 b.innerText = room;
                 b.onclick = () => {
-                    // Check if Manual X/Y has been populated
-                    const manXInput = document.getElementById('manual-x').value;
-                    const manYInput = document.getElementById('manual-y').value;
-                    
-                    let coordsToSet = null;
-
-                    if (manXInput !== "" && manYInput !== "") {
-                        coordsToSet = {
-                            x: parseFloat(manXInput),
-                            y: parseFloat(manYInput)
-                        };
-                    } else if (localTabletCoords) {
-                        coordsToSet = localTabletCoords;
-                    }
-
-                    if (!coordsToSet) {
-                        alert("Please enter Manual coordinates (Option A) OR click Run Auto-Calibration (Option B) before choosing a room!");
-                        return;
-                    }
-
                     document.getElementById('tablet-setup').style.display = 'none';
                     document.getElementById('tablet-active').style.display = 'block';
                     document.getElementById('tablet-room-name').innerText = room.toUpperCase();
                     
-                    db.ref(`stations/${room}/coords`).set(coordsToSet).then(() => {
+                    // 1. Get the designated frequency for this room selection
+                    const frequency = STATION_FREQUENCIES[room];
+
+                    // 2. Publish station presence coordinates to Firebase
+                    db.ref(`stations/${room}/coords`).set({ x: 0, y: 0 }).then(() => {
+                        // 3. Start transmitting the distinct room beacon tone
+                        startBeaconTransmission(frequency);
+                        // 4. Start listening for the player's return signal (21000 Hz)
                         monitorRoomTasks(room);
                     });
                 };

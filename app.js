@@ -18,245 +18,165 @@ const db = firebase.database();
 const myId = localStorage.getItem('amongUsPlayerId') || "p_" + Math.floor(Math.random() * 100000);
 localStorage.setItem('amongUsPlayerId', myId);
 
-// --- 2. GAME CONSTANTS & SENSITIVITY ---
+// --- 2. GAME CONSTANTS & ACOUSTIC CHANNEL MAP ---
 const ROOMS = ["Living Room", "Boy's Bedroom", "Bathroom", "Laundry Room", "Mya's Room", "Parents' Room", "Kitchen"];
 const TASK_POOL = [
     { name: "Fix Wires", icon: "🔌" }, { name: "Download Data", icon: "💾" },
     { name: "Empty Trash", icon: "🗑️" }, { name: "Divert Power", icon: "⚡" }
 ];
 
-const KILL_LIMIT = 1.524; // 5 feet
-const TASK_LIMIT = 3.0;   // 10 feet
-const PASSIVE_SNAP_LIMIT = 2.0; // 2 meters (Auto-snaps to landmarks)
-const STEP_LENGTH = 0.7; // Stride length in meters
+// Frequencies assigned to each Tablet Station (all ultra-high, safe, human-inaudible)
+const STATION_FREQUENCIES = {
+    "Kitchen": 18200,
+    "Living Room": 18600,
+    "Bathroom": 19000,
+    "Laundry Room": 19400,
+    "Mya's Room": 19800,
+    "Parents' Room": 20200,
+    "Boy's Bedroom": 20600
+};
 
-// --- 3. HYBRID POSITION FUSION VARIABLE MATRIX ---
-let fusedX = 0;
-let fusedY = 0;
-let currentHeading = 0;
-let isTracking = false;
+// Player Transmit Frequency (all players broadcast on 21000 Hz)
+const PLAYER_FREQUENCY = 21000;
 
-// Step Detector State
-let stepCooldown = false;
-let isTurning = false;
-let turnTimer = null;
-let lastHeading = 0;
+// Volume threshold (0-255 scale from FFT analysis). 
+// Higher means they have to be closer. ~80 is usually around 5 feet.
+const ACOUSTIC_PROXIMITY_THRESHOLD = 80; 
 
-// GPS Sensor Watcher
-let gpsWatcherId = null;
+// --- 3. SONAR ENGINE (WEB AUDIO API) ---
+let audioCtx = null;
+let beaconOscillator = null;
+let audioAnalyser = null;
+let micStream = null;
+let frequencyDataArray = null;
 
-// --- 4. COORDINATE PROJECTION & PYTHAGOREAN MATH ---
-function getRelativeXY(lat, lon, baseLat, baseLon) {
-    const latRad = baseLat * Math.PI / 180;
-    const metersPerLatDegree = 111139; 
-    const metersPerLonDegree = 111139 * Math.cos(latRad);
-    const x = (lon - baseLon) * metersPerLonDegree;
-    const y = (lat - baseLat) * metersPerLatDegree;
-    return { x: x, y: y };
-}
+// Starts broadcasting your device's unique ultrasonic locator beacon
+function startBeaconTransmission(frequency) {
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        beaconOscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
 
-function getPythagoreanDistance(x1, y1, x2, y2) {
-    return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
-}
-
-// --- 5. INITIALIZE FUSION SENSORS (GPS + MOTION) ---
-function startFusionTracking() {
-    isTracking = true;
-
-    // 1. iOS Permission Check for Motion Sensors
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-        DeviceOrientationEvent.requestPermission().then(permissionState => {
-            if (permissionState === 'granted') {
-                attachSensors();
-            } else {
-                alert("Motion permissions are required for tracking!");
-            }
-        }).catch(console.error);
-    } else {
-        attachSensors();
-    }
-}
-
-function attachSensors() {
-    // 2. Compass Sensor (iOS & Android absolute wrapper)
-    if ('ondeviceorientationabsolute' in window) {
-        window.addEventListener("deviceorientationabsolute", handleCompassInput, true);
-    } else if ('ondeviceorientation' in window) {
-        window.addEventListener("deviceorientation", handleCompassInput, true);
-    }
-
-    // 3. Accelerometer (Step Detector)
-    window.addEventListener('devicemotion', (event) => {
-        let accelZ = 0;
-        if (event.acceleration && event.acceleration.z !== null) {
-            accelZ = event.acceleration.z;
-        } else if (event.accelerationIncludingGravity) {
-            accelZ = event.accelerationIncludingGravity.z - 9.81;
-        }
+        beaconOscillator.type = 'sine';
+        beaconOscillator.frequency.value = frequency; 
         
-        if (accelZ === null) return;
+        // Very low gain (quiet) is safe and easily picked up by nearby mics
+        gainNode.gain.value = 0.05; 
 
-        // Step peak detection
-        if (Math.abs(accelZ) > 2.5 && !stepCooldown && !isTurning) {
-            stepCooldown = true;
-            registerPedometerStep();
-            setTimeout(() => { stepCooldown = false; }, 500); 
-        }
-    });
+        beaconOscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        beaconOscillator.start();
+        console.log(`Sonar Beacon Active: Broadcasting on ${frequency}Hz`);
+    } catch (e) {
+        console.error("Failed to start Audio Transmitter: ", e);
+    }
+}
 
-    // 4. DGPS Correction Receiver & complementary filter loop
-    db.ref().on('value', snap => {
-        const data = snap.val() || {};
-        const base = data.baseCoords;
-        const drift = data.gpsDrift || { lat: 0, lng: 0 };
+// Starts analyzing nearby audio frequencies via the microphone
+function startSonarReceiver(onAnalysisFrame) {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false }, video: false })
+            .then(stream => {
+                micStream = stream;
+                const rxCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = rxCtx.createMediaStreamSource(stream);
+                
+                audioAnalyser = rxCtx.createAnalyser();
+                audioAnalyser.fftSize = 2048; // Clean frequency resolution
+                
+                const bufferLength = audioAnalyser.frequencyBinCount;
+                frequencyDataArray = new Uint8Array(bufferLength);
+                
+                source.connect(audioAnalyser);
 
-        if (!base) return;
-
-        if (gpsWatcherId !== null && navigator.geolocation) {
-            navigator.geolocation.clearWatch(gpsWatcherId);
-        }
-
-        if (navigator.geolocation) {
-            gpsWatcherId = navigator.geolocation.watchPosition(position => {
-                const correctedLat = position.coords.latitude - drift.lat;
-                const correctedLng = position.coords.longitude - drift.lng;
-                const dgpsCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
-
-                // --- COMPLEMENTARY FILTER FUSION ---
-                // If DGPS coordinates are extremely far from our current step estimation (e.g. >15m), 
-                // we treat it as an indoor satellite reflection glitch and ignore it.
-                const offsetToGps = getPythagoreanDistance(fusedX, fusedY, dgpsCoords.x, dgpsCoords.y);
-
-                if (offsetToGps <= 15.0) {
-                    // Slowly converge step-based calculations toward the true DGPS position over time (85/15 split)
-                    fusedX = (fusedX * 0.85) + (dgpsCoords.x * 0.15);
-                    fusedY = (fusedY * 0.85) + (dgpsCoords.y * 0.15);
-                } else {
-                    console.log("GPS Glitch detected! Discarding jump of: " + offsetToGps.toFixed(1) + "m");
-                }
-
-                evaluatePassiveLandmarkSnapping(data.stations || {});
-
-            }, null, { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
-        }
-    });
-
-    // Publish coordinate matrix to Firebase every second
-    setInterval(() => {
-        if(isTracking) {
-            db.ref(`players/${myId}/coords`).set({
-                x: fusedX,
-                y: fusedY,
-                timestamp: Date.now()
+                // Run the analysis loop
+                const runAnalysis = () => {
+                    if (audioAnalyser) {
+                        audioAnalyser.getByteFrequencyData(frequencyDataArray);
+                        onAnalysisFrame(rxCtx.sampleRate);
+                        requestAnimationFrame(runAnalysis);
+                    }
+                };
+                runAnalysis();
+            }).catch(err => {
+                alert("Microphone access is required for Device-to-Device Sonar range tracking!");
             });
-        }
-    }, 1000);
+    }
 }
 
-// Compass direction parsing
-function handleCompassInput(event) {
-    let heading = 0;
-    if (event.webkitCompassHeading) {
-        heading = event.webkitCompassHeading;
-    } else if (event.alpha !== null) {
-        heading = 360 - event.alpha;
-    }
-    currentHeading = heading;
-
-    if (Math.abs(heading - lastHeading) > 12) {
-        isTurning = true;
-        clearTimeout(turnTimer);
-        turnTimer = setTimeout(() => { isTurning = false; }, 500);
-    }
-    lastHeading = heading;
-}
-
-// Dead reckoning step execution
-function registerPedometerStep() {
-    const headingRad = currentHeading * (Math.PI / 180);
-    const dx = STEP_LENGTH * Math.sin(headingRad);
-    const dy = STEP_LENGTH * Math.cos(headingRad);
+// Returns the raw volume (0-255) of a specific frequency index in the room
+function getVolumeAtFrequency(targetFrequency, sampleRate) {
+    if (!audioAnalyser || !frequencyDataArray) return 0;
     
-    // Add physical steps instantly to coordinates (smooth on-screen movements)
-    fusedX += dx;
-    fusedY += dy;
+    const binCount = audioAnalyser.frequencyBinCount;
+    const nyquist = sampleRate / 2;
+    const targetBinIndex = Math.round(targetFrequency / (nyquist / binCount));
     
-    const statusText = document.getElementById('radar-status-text');
-    if (statusText) {
-        statusText.innerText = `FUSED Pos: (${fusedX.toFixed(1)}m, ${fusedY.toFixed(1)}m)`;
-    }
+    // Check target bin and immediate surrounding bins to account for minor hardware pitch variances
+    const val1 = frequencyDataArray[targetBinIndex] || 0;
+    const val2 = frequencyDataArray[targetBinIndex - 1] || 0;
+    const val3 = frequencyDataArray[targetBinIndex + 1] || 0;
+    
+    return Math.max(val1, val2, val3);
 }
 
-// Passive Landmark Snapping: Resets coordinate drift when passing stationary tablets or host
-function evaluatePassiveLandmarkSnapping(stations) {
-    let nearestName = "Host";
-    let targetX = 0;
-    let targetY = 0;
-    let minDist = getPythagoreanDistance(0, 0, fusedX, fusedY); // distance to host
-
-    for (let room in stations) {
-        const s = stations[room];
-        if (s.coords) {
-            const dist = getPythagoreanDistance(s.coords.x, s.coords.y, fusedX, fusedY);
-            if (dist < minDist) {
-                minDist = dist;
-                nearestName = room;
-                targetX = s.coords.x;
-                targetY = s.coords.y;
-            }
-        }
-    }
-
-    // Auto-snap coordinates exactly to landmark if within 2 meters
-    if (minDist <= PASSIVE_SNAP_LIMIT) {
-        fusedX = targetX;
-        fusedY = targetY;
-        console.log(`PASSIVE SNAP: Locked coordinates to ${nearestName.toUpperCase()}`);
-    }
-}
-
-// Manual calibration reset
-function calibratePosition() {
-    fusedX = 0;
-    fusedY = 0;
-    const statusText = document.getElementById('radar-status-text');
-    if (statusText) statusText.innerText = `FUSED Pos: (0.0m, 0.0m)`;
-    alert("Synced with Host Computer! Relative position reset to (0,0).");
-}
-
-// --- 6. PLAYER CONTROLS ---
+// --- 4. PLAYER CONTROL & RADAR LOOPS ---
 function joinGame() {
     const nameInput = document.getElementById('playerNameInput');
     const name = nameInput ? nameInput.value.trim() : "Player";
     if (!name) return alert("Please enter a name!");
     
-    db.ref(`players/${myId}`).set({ 
-        name: name, 
-        status: 'alive', 
-        role: 'crewmate',
-        coords: { x: 0, y: 0, timestamp: Date.now() } // Assumed start at origin
-    });
+    db.ref(`players/${myId}`).set({ name: name, status: 'alive', role: 'crewmate' });
     
-    startFusionTracking();
+    // Initialize Sonar tracking
+    startBeaconTransmission(PLAYER_FREQUENCY);
+    startPlayerRadarReceiver();
+}
+
+function startPlayerRadarReceiver() {
+    startSonarReceiver((sampleRate) => {
+        // Players continuously listen to determine if they are standing next to a tablet station
+        let nearestStation = "None";
+        let maxVolume = 0;
+
+        for (let stationName in STATION_FREQUENCIES) {
+            const freq = STATION_FREQUENCIES[stationName];
+            const vol = getVolumeAtFrequency(freq, sampleRate);
+            
+            if (vol > ACOUSTIC_PROXIMITY_THRESHOLD && vol > maxVolume) {
+                maxVolume = vol;
+                nearestStation = stationName;
+            }
+        }
+
+        // Write our current detected room location to the database based on Sonar volume
+        db.ref(`players/${myId}/currentRoom`).set(nearestStation);
+
+        const statusText = document.getElementById('radar-status-text');
+        if (statusText) {
+            statusText.innerText = nearestStation !== "None" 
+                ? `📍 STATION RANGE: ${nearestStation.toUpperCase()}` 
+                : `🔍 Scanning for Station Beacons...`;
+        }
+    });
 }
 
 function startKillProximityCheck() {
-    db.ref('players').on('value', snap => {
-        const players = snap.val() || {};
+    db.ref().on('value', snap => {
+        const data = snap.val() || {};
+        const players = data.players || {};
         const me = players[myId];
         
         if (!me || me.role !== 'impostor' || me.status !== 'alive') return;
         
         let targetNearby = false;
-        if (me.coords) {
-            for (let id in players) {
-                if (id !== myId && players[id].status === 'alive' && players[id].coords) {
-                    const dist = getPythagoreanDistance(fusedX, fusedY, players[id].coords.x, players[id].coords.y);
-                    if (dist <= KILL_LIMIT) {
-                        targetNearby = true;
-                        break;
-                    }
-                }
+
+        // The impostor reads Firebase to see if any alive player is currently in their room
+        for (let id in players) {
+            if (id !== myId && players[id].status === 'alive' && players[id].currentRoom === me.currentRoom && me.currentRoom !== "None") {
+                targetNearby = true;
+                break;
             }
         }
         
@@ -269,22 +189,19 @@ function tryKill() {
     db.ref('players').once('value', snap => {
         const allPlayers = snap.val();
         const me = allPlayers[myId];
-        if (me.role !== 'impostor' || me.status !== 'alive') return;
+        if (me.role !== 'impostor' || me.status !== 'alive' || me.currentRoom === "None") return;
 
         for (let id in allPlayers) {
-            if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].coords) {
-                const dist = getPythagoreanDistance(fusedX, fusedY, allPlayers[id].coords.x, allPlayers[id].coords.y);
-                if (dist <= KILL_LIMIT) {
-                    db.ref(`players/${id}/status`).set('ghost');
-                    alert(`Eliminated ${allPlayers[id].name}!`);
-                    return;
-                }
+            if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].currentRoom === me.currentRoom) {
+                db.ref(`players/${id}/status`).set('ghost');
+                alert(`Eliminated ${allPlayers[id].name}!`);
+                return;
             }
         }
     });
 }
 
-// --- 7. VOTING SYSTEM ---
+// --- 5. VOTING SYSTEM ---
 function callMeeting() {
     db.ref('votes').remove();
     db.ref('ejectionMessage').remove();
@@ -317,7 +234,7 @@ function tallyVotes() {
     });
 }
 
-// --- 8. HOST DASHBOARD MANAGEMENT ---
+// --- 6. HOST DATABASE MONITORING ---
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
     const tableBody = document.getElementById('player-list-body');
@@ -330,7 +247,7 @@ db.ref('players').on('value', snap => {
             tableBody.innerHTML += `<tr>
                 <td>${p.name}</td>
                 <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
-                <td>${p.coords ? `${p.coords.x.toFixed(1)}m, ${p.coords.y.toFixed(1)}m` : "No Data"}</td>
+                <td>${p.currentRoom || "Scanning..."}</td>
                 <td><button onclick="kickPlayer('${id}')">KICK</button></td>
             </tr>`;
         }
@@ -384,7 +301,7 @@ function kickPlayer(id) { if(confirm("Kick?")) db.ref(`players/${id}`).remove();
 function resetGame() {
     if(confirm("Reset game?")) {
         db.ref().update({
-            gameState: 'lobby', meeting: false, cameras: null, votes: null, ejectionMessage: null, stations: null, gpsDrift: null
+            gameState: 'lobby', meeting: false, cameras: null, votes: null, ejectionMessage: null, stations: null
         });
         db.ref('players').once('value', snap => {
             const p = snap.val();
@@ -393,7 +310,7 @@ function resetGame() {
                     db.ref(`players/${id}/status`).set('alive');
                     db.ref(`players/${id}/role`).set('crewmate');
                     db.ref(`players/${id}/tasks`).remove();
-                    db.ref(`players/${id}/coords`).remove();
+                    db.ref(`players/${id}/currentRoom`).remove();
                 }
             }
         });
@@ -410,14 +327,9 @@ function updateHostDashboard(players) {
     
     for(let id in players) {
         const p = players[id];
-        let distMsg = "Unknown";
-        if(p.coords) {
-            const d = getPythagoreanDistance(0,0, p.coords.x, p.coords.y).toFixed(1);
-            distMsg = `${d}m from base`;
-        }
         html += `<div style="background:#333; padding:10px; margin-bottom:5px; border-left:5px solid ${p.status === 'alive' ? '#00ff00' : '#ff0000'};">
                     <b>${p.name}</b>: ${p.status.toUpperCase()} <br>
-                    <small style="color:#aaa;">${distMsg}</small>
+                    <small style="color:#aaa;">Location: ${p.currentRoom || "Unknown"}</small>
                  </div>`;
         (p.tasks || []).forEach(t => { total++; if(t.done) done++; });
     }
@@ -425,23 +337,25 @@ function updateHostDashboard(players) {
     progress.style.width = (total === 0 ? 0 : (done / total) * 100) + "%";
 }
 
-// --- 9. TABLET PROXIMITY ---
+// --- 7. TABLET PROXIMITY ---
 function monitorRoomTasks(roomName) {
-    db.ref().on('value', snap => {
-        const data = snap.val() || {};
-        const players = data.players || {};
-        const station = data.stations ? data.stations[roomName] : null;
-        const container = document.getElementById('active-tasks-container');
-        if (!container || !station || !station.coords) return;
-        
-        container.innerHTML = "";
-        let playersPresent = false;
+    // Start listening for player locator beacon (21000 Hz)
+    startSonarReceiver((sampleRate) => {
+        db.ref().once('value', snap => {
+            const data = snap.val() || {};
+            const players = data.players || {};
+            const container = document.getElementById('active-tasks-container');
+            if (!container) return;
+            
+            container.innerHTML = "";
+            let playersPresent = false;
 
-        for (let id in players) {
-            const p = players[id];
-            if (p.coords) {
-                const distance = getPythagoreanDistance(station.coords.x, station.coords.y, p.coords.x, p.coords.y);
-                if (distance <= TASK_LIMIT) {
+            // Check if any player's beacon signal is being picked up loudly by this tablet's microphone
+            for (let id in players) {
+                const p = players[id];
+                
+                // If this player is alive and is registered as physically inside our room via sonar
+                if (p.currentRoom === roomName && p.status === 'alive') {
                     playersPresent = true;
                     let html = `<h3>${p.name}</h3>`;
                     (p.tasks || []).filter(t => t.room === roomName).forEach(t => {
@@ -453,8 +367,8 @@ function monitorRoomTasks(roomName) {
                     container.appendChild(div);
                 }
             }
-        }
-        if (!playersPresent) container.innerHTML = `<p>No crewmates nearby (within ${TASK_LIMIT}m)...</p>`;
+            if (!playersPresent) container.innerHTML = `<p>No crewmates nearby...</p>`;
+        });
     });
 }
 
