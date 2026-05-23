@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Among Us IRL - Hub</title>
+    <title>Among Us IRL - Master Hub</title>
     <link rel="stylesheet" href="style.css">
     
     <!-- Firebase SDKs -->
@@ -95,10 +95,16 @@
             </div>
             <div id="player-status-indicator"></div>
             <hr>
-            <h3>YOUR LOCATION:</h3>
-            <div id="room-buttons" class="room-grid"></div>
+            
+            <!-- Automated Geolocation Status instead of Room Buttons -->
+            <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
+                <h3 style="color: #66fcf1; margin-bottom: 5px;">🛰️ GPS RADAR ACTIVE</h3>
+                <p style="color: #888; font-size: 0.9rem;">Your physical position is being tracked automatically. Keep this page open.</p>
+            </div>
+            
             <hr>
             <div class="player-actions">
+                <!-- Kill button turns visible automatically when target is nearby -->
                 <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
                 <button class="report-btn" onclick="callMeeting()">REPORT / EMERGENCY</button>
             </div>
@@ -113,7 +119,7 @@
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
-            <p>Stand near this tablet to see your tasks.</p>
+            <p style="color: #ffff33; margin-bottom: 20px;">🛰️ RADAR ONLINE - Stand near this station to show your tasks.</p>
             <div id="active-tasks-container"></div>
         </div>
     </div>
@@ -166,7 +172,6 @@
 
         // --- HOST INITIALIZATION ---
         function initHost() {
-            // Show the "Tally" button ONLY on the Host Computer
             document.getElementById('host-end-vote-btn').style.display = 'block';
             
             db.ref('gameState').on('value', snap => {
@@ -183,20 +188,6 @@
 
         // --- PLAYER INITIALIZATION ---
         function initPlayerUI() {
-            const grid = document.getElementById('room-buttons');
-            grid.innerHTML = "";
-            ROOMS.forEach(room => {
-                let b = document.createElement('button');
-                b.className = "room-btn";
-                b.innerText = room;
-                b.onclick = () => {
-                    db.ref(`players/${myId}/currentRoom`).set(room);
-                    document.querySelectorAll('.room-btn').forEach(btn => btn.classList.remove('active-room'));
-                    b.classList.add('active-room');
-                };
-                grid.appendChild(b);
-            });
-
             db.ref(`players/${myId}`).on('value', snap => {
                 const data = snap.val();
                 if (data && data.role) {
@@ -207,7 +198,8 @@
                     document.getElementById('player-status-indicator').innerText = "STATUS: " + data.status.toUpperCase();
                     
                     if(data.role === 'impostor' && data.status === 'alive') {
-                        document.getElementById('kill-btn').style.display = 'block';
+                        // Start continuously evaluating proximity to other players to toggle the Kill button
+                        startKillProximityCheck();
                     } else {
                         document.getElementById('kill-btn').style.display = 'none';
                     }
@@ -217,6 +209,9 @@
                     } else {
                         document.body.style.filter = "none";
                     }
+
+                    // Start high-accuracy coordinate updates to Firebase
+                    startLocationTracking();
                 }
             });
         }
@@ -228,12 +223,27 @@
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
                 b.className = "menu-btn";
+                b.style.margin = "5px";
                 b.innerText = room;
                 b.onclick = () => {
                     document.getElementById('tablet-setup').style.display = 'none';
                     document.getElementById('tablet-active').style.display = 'block';
-                    document.getElementById('tablet-room-name').innerText = room;
-                    monitorRoomTasks(room);
+                    document.getElementById('tablet-room-name').innerText = room.toUpperCase() + " STATION";
+                    
+                    // Capture stationary coordinate lock on click
+                    if (navigator.geolocation) {
+                        navigator.geolocation.getCurrentPosition(position => {
+                            const coords = {
+                                lat: position.coords.latitude,
+                                lng: position.coords.longitude
+                            };
+                            db.ref(`stations/${room}/coords`).set(coords).then(() => {
+                                monitorRoomTasks(room);
+                            });
+                        }, err => {
+                            alert("Tablet GPS Error: Ensure Location Services are turned on.");
+                        }, { enableHighAccuracy: true });
+                    }
                 };
                 div.appendChild(b);
             });
@@ -246,6 +256,7 @@
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
                 b.className = "menu-btn";
+                b.style.margin = "5px";
                 b.innerText = room;
                 b.onclick = () => startCameraFeed(room);
                 div.appendChild(b);
@@ -259,26 +270,22 @@
             const overlay = document.getElementById('meeting-overlay');
             const mainMenu = document.getElementById('role-selector-screen');
 
-            // 1. Show/Hide Meeting Screen (only if not on main hub)
             if (isMeeting && mainMenu.style.display === 'none') {
                 overlay.style.display = 'flex';
                 
-                // 2. Render Players in Voting Screen
                 const players = data.players || {};
                 const votes = data.votes || {};
                 const list = document.getElementById('voting-list');
-                list.innerHTML = ""; // Clear current list
+                list.innerHTML = ""; 
                 
                 const myVote = votes[myId];
                 const amIAlive = players[myId] && players[myId].status === 'alive';
 
                 for(let id in players) {
                     const p = players[id];
-                    // Only show ALIVE players as vote options
                     if (p.status === 'alive') {
                         const hasVoted = votes[id] ? "✅ Voted" : "⏳ Thinking...";
                         
-                        // Hide vote button if I am dead OR I already voted
                         let btnHtml = "";
                         if (amIAlive && !myVote) {
                             btnHtml = `<button class="vote-action-btn" onclick="castVote('${id}')">VOTE</button>`;
@@ -296,7 +303,6 @@
                     }
                 }
 
-                // Hide skip button if already voted or dead
                 document.getElementById('skip-vote-btn').style.display = (amIAlive && !myVote) ? 'block' : 'none';
                 
             } else {
