@@ -35,17 +35,12 @@ const TASK_POOL = [
     { name: "Manifold", icon: "🔢" }
 ];
 
-// PROXIMITY CONFIGURATIONS
-const KILL_LIMIT = 1.524; // 5 feet converted to meters (strict distance for kills)
-const TASK_LIMIT = 3.0;   // ~10 feet converted to meters (wider range for stationary task tablets)
+const KILL_LIMIT = 1.524; 
+const TASK_LIMIT = 3.0;   
 
 // --- 3. COORDINATE PROJECTION & PYTHAGOREAN MATH ---
-
-// Converts Latitude/Longitude to relative meters (X, Y) from the Host Computer (0,0)
 function getRelativeXY(lat, lon, baseLat, baseLon) {
     const latRad = baseLat * Math.PI / 180;
-    
-    // Constant meters per degree approximations
     const metersPerLatDegree = 111139; 
     const metersPerLonDegree = 111139 * Math.cos(latRad);
 
@@ -55,25 +50,31 @@ function getRelativeXY(lat, lon, baseLat, baseLon) {
     return { x: x, y: y };
 }
 
-// Pythagorean theorem calculation: d = sqrt( (x2 - x1)^2 + (y2 - y1)^2 )
 function getPythagoreanDistance(x1, y1, x2, y2) {
     const dx = x2 - x1;
     const dy = y2 - y1;
     return Math.sqrt((dx * dx) + (dy * dy));
 }
 
-// --- 4. GPS TRACKING SENSORS ---
+// --- 4. PLAYER POSITION SENSOR (REAL-TIME SYNC) ---
+let gpsWatcherId = null;
+
 function startLocationTracking() {
-    db.ref('baseCoords').once('value', snap => {
+    // Listen for coordinates instead of checking once
+    db.ref('baseCoords').on('value', snap => {
         const base = snap.val();
         if (!base) {
-            console.warn("Base coordinates not set by Host yet.");
+            console.log("Waiting for Host to publish base coordinates...");
             return;
         }
 
+        // Clear existing watch loops to avoid memory leaks
+        if (gpsWatcherId !== null && navigator.geolocation) {
+            navigator.geolocation.clearWatch(gpsWatcherId);
+        }
+
         if (navigator.geolocation) {
-            navigator.geolocation.watchPosition(position => {
-                // Project raw GPS to planar offsets (meters) relative to base coords
+            gpsWatcherId = navigator.geolocation.watchPosition(position => {
                 const relativeCoords = getRelativeXY(
                     position.coords.latitude,
                     position.coords.longitude,
@@ -87,12 +88,14 @@ function startLocationTracking() {
                     timestamp: Date.now()
                 });
             }, err => {
-                console.error("GPS Sensor error: ", err.message);
+                console.error("GPS Watch Error: ", err.message);
             }, {
                 enableHighAccuracy: true,
                 maximumAge: 1000,
-                timeout: 5000
+                timeout: 10000
             });
+        } else {
+            console.error("Geolocation not supported on this browser context.");
         }
     });
 }
@@ -111,7 +114,6 @@ function joinGame() {
     startLocationTracking();
 }
 
-// Continuous Proximity Check for Impostors using Pythagorean Distances
 function startKillProximityCheck() {
     db.ref().on('value', snap => {
         const data = snap.val() || {};
@@ -129,7 +131,6 @@ function startKillProximityCheck() {
                     const pCoords = players[id].coords;
                     if (pCoords) {
                         const dist = getPythagoreanDistance(myCoords.x, myCoords.y, pCoords.x, pCoords.y);
-                        // Check against the 5-foot (1.524m) limit
                         if (dist <= KILL_LIMIT) {
                             targetNearby = true;
                             break;
@@ -156,7 +157,6 @@ function tryKill() {
         for (let id in allPlayers) {
             if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].coords) {
                 const dist = getPythagoreanDistance(me.coords.x, me.coords.y, allPlayers[id].coords.x, allPlayers[id].coords.y);
-                // Enforce the 5-foot (1.524m) limit
                 if (dist <= KILL_LIMIT) {
                     db.ref(`players/${id}/status`).set('ghost');
                     alert(`Eliminated ${allPlayers[id].name}!`);
@@ -375,10 +375,8 @@ function monitorRoomTasks(roomName) {
             const p = players[id];
             
             if (p.coords) {
-                // Pythagorean Distance math between player Cartesian relative coordinates
                 const distance = getPythagoreanDistance(station.coords.x, station.coords.y, p.coords.x, p.coords.y);
                 
-                // Check against the stationary task tablet limit
                 if (distance <= TASK_LIMIT) {
                     playersPresent = true;
                     const playerDiv = document.createElement('div');
