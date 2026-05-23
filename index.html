@@ -3,22 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Among Us IRL Hub</title>
+    <title>Among Us IRL - Hub</title>
     <link rel="stylesheet" href="style.css">
     
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
     
-    <!-- PeerJS for Cameras -->
+    <!-- PeerJS for Video Streaming -->
     <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 </head>
 <body>
 
-    <!-- ROLE SELECTOR (Initial Screen) -->
+    <!-- ROLE SELECTOR: The First Screen you see -->
     <div id="role-selector-screen">
         <h1 class="glitch">AMONG US IRL</h1>
-        <p>Select the role for this device:</p>
+        <p>Choose the role for this device:</p>
         <div class="menu-grid">
             <button class="menu-btn" onclick="switchView('host-view')">💻 HOST COMPUTER</button>
             <button class="menu-btn" onclick="switchView('player-view')">📱 PLAYER PHONE</button>
@@ -27,38 +27,81 @@
         </div>
     </div>
 
-    <!-- 1. HOST COMPUTER VIEW -->
+    <!-- 1. HOST COMPUTER VIEW (Settings & Monitoring) -->
     <div id="host-view" class="role-section" style="display:none;">
-        <div id="host-lobby">
-            <h1>COMMAND CENTER</h1>
-            <div class="lobby-box">
-                <h3>Players Joined: <span id="player-count">0</span></h3>
-                <ul id="player-list"></ul>
-                <button onclick="startGame()">START GAME</button>
+        <h1 class="glitch">COMMAND CENTER</h1>
+        
+        <!-- Lobby State -->
+        <div id="host-lobby-container" class="host-container">
+            <div class="settings-panel">
+                <h3>GAME SETTINGS</h3>
+                <div class="setting-item">
+                    <label>Impostor Mode:</label>
+                    <select id="setting-imp-logic">
+                        <option value="auto">Auto (4+:1, 6+:2, 9+:3)</option>
+                        <option value="1">Always 1</option>
+                        <option value="2">Always 2</option>
+                        <option value="3">Always 3</option>
+                    </select>
+                </div>
+                <div class="setting-item">
+                    <label>Tasks per Player:</label>
+                    <input type="number" id="setting-task-count" value="4" min="1" max="10">
+                </div>
+                <button class="start-game-btn" onclick="startGame()">🚀 START MISSION</button>
+                <button class="reset-btn" onclick="resetGame()">♻️ RESET ALL</button>
+            </div>
+
+            <div class="player-lobby">
+                <h3>CONNECTED PLAYERS (<span id="player-count">0</span>)</h3>
+                <table>
+                    <thead>
+                        <tr><th>Name</th><th>Status</th><th>Location</th><th>Action</th></tr>
+                    </thead>
+                    <tbody id="player-list-body"></tbody>
+                </table>
             </div>
         </div>
+
+        <!-- In-Game State -->
         <div id="host-dashboard" style="display:none;">
-            <div class="progress-container"><div id="task-progress-bar"></div></div>
-            <div class="main-layout">
-                <div id="camera-grid"></div>
-                <div id="status-board"></div>
+            <div class="progress-container">
+                <div id="task-progress-bar" style="width:0%"></div>
             </div>
+            <div class="main-layout">
+                <div class="security-section">
+                    <h3>LIVE CCTV FEEDS</h3>
+                    <div id="camera-grid"></div>
+                </div>
+                <div class="status-section">
+                    <h3>PLAYER DATA</h3>
+                    <div id="status-board"></div>
+                </div>
+            </div>
+            <button class="reset-btn" onclick="resetGame()">END GAME / RESET</button>
         </div>
     </div>
 
     <!-- 2. PLAYER PHONE VIEW -->
     <div id="player-view" class="role-section" style="display:none;">
         <div id="player-setup">
-            <input type="text" id="playerNameInput" placeholder="Enter Name">
-            <button onclick="joinGame()">JOIN LOBBY</button>
+            <h1>PLAYER JOIN</h1>
+            <input type="text" id="playerNameInput" placeholder="Your Name...">
+            <button class="menu-btn" onclick="joinGame()">JOIN LOBBY</button>
         </div>
         <div id="player-game" style="display:none;">
-            <h2 id="role-text"></h2>
-            <div id="room-buttons">
-                <!-- Room buttons like 'Kitchen', 'Laundry' -->
+            <div id="role-reveal-box">
+                <h2 id="role-text"></h2>
             </div>
-            <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
-            <button class="report-btn" onclick="callMeeting()">REPORT / EMERGENCY</button>
+            <div id="player-status-indicator"></div>
+            <hr>
+            <h3>YOUR LOCATION:</h3>
+            <div id="room-buttons" class="room-grid"></div>
+            <hr>
+            <div class="player-actions">
+                <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
+                <button class="report-btn" onclick="callMeeting()">REPORT / EMERGENCY</button>
+            </div>
         </div>
     </div>
 
@@ -66,10 +109,11 @@
     <div id="tablet-view" class="role-section" style="display:none;">
         <div id="tablet-setup">
             <h2>Assign this Tablet to a Room:</h2>
-            <div id="tablet-room-selection"></div>
+            <div id="tablet-room-selection" class="room-grid"></div>
         </div>
         <div id="tablet-active" style="display:none;">
-            <h1 id="tablet-room-name"></h1>
+            <h1 id="tablet-room-name" style="color:#33ffff"></h1>
+            <p>Stand near this tablet to see your tasks.</p>
             <div id="active-tasks-container"></div>
         </div>
     </div>
@@ -77,55 +121,73 @@
     <!-- 4. SECURITY CAMERA VIEW -->
     <div id="camera-view" class="role-section" style="display:none;">
         <div id="camera-setup">
-            <h2>Camera Room:</h2>
-            <div id="camera-room-selection"></div>
+            <h2>Select Camera Room:</h2>
+            <div id="camera-room-selection" class="room-grid"></div>
         </div>
         <div id="camera-active" style="display:none;">
             <h2 id="cam-display-name"></h2>
+            <div class="live-tag">● LIVE</div>
             <video id="localVideo" autoplay playsinline muted></video>
+            <button onclick="location.reload()" class="reset-btn">Change Room</button>
         </div>
     </div>
 
-    <!-- EMERGENCY OVERLAY -->
+    <!-- EMERGENCY MEETING OVERLAY -->
     <div id="meeting-overlay" class="meeting-overlay" style="display:none;">
-        <h1>EMERGENCY MEETING</h1>
-        <button onclick="endMeeting()">RESUME</button>
+        <div class="meeting-box">
+            <img src="https://media.tenor.com/C7v1h8Tj-mAAAAAC/among-us-emergency-meeting.gif" width="250">
+            <h1>EMERGENCY MEETING</h1>
+            <p>Discuss and vote. Host must resume when finished.</p>
+            <button id="host-resume-btn" style="display:none;" onclick="endMeeting()">RESUME GAME</button>
+        </div>
     </div>
 
+    <!-- Script Links -->
     <script src="app.js"></script>
     <script>
-        // VIEW SWITCHING LOGIC
+        // MASTER NAVIGATION
         function switchView(viewId) {
             document.getElementById('role-selector-screen').style.display = 'none';
             document.querySelectorAll('.role-section').forEach(sec => sec.style.display = 'none');
             document.getElementById(viewId).style.display = 'block';
 
-            // Initialize specific role logic
             if (viewId === 'host-view') initHost();
-            if (viewId === 'player-view') initPlayer();
+            if (viewId === 'player-view') initPlayerUI();
             if (viewId === 'tablet-view') initTabletSelection();
             if (viewId === 'camera-view') initCameraSelection();
         }
 
-        // --- HOST LOGIC ---
+        // --- HOST INITIALIZATION ---
         function initHost() {
-            db.ref('players').on('value', snap => {
-                const players = snap.val() || {};
-                document.getElementById('player-count').innerText = Object.keys(players).length;
-                document.getElementById('player-list').innerHTML = Object.values(players).map(p => `<li>${p.name}</li>`).join('');
-                updateHostDashboard(players);
+            // Show resume button only for Host
+            document.getElementById('host-resume-btn').style.display = 'block';
+            
+            db.ref('gameState').on('value', snap => {
+                if (snap.val() === 'playing') {
+                    document.getElementById('host-lobby-container').style.display = 'none';
+                    document.getElementById('host-dashboard').style.display = 'block';
+                    initHostCameras();
+                } else {
+                    document.getElementById('host-lobby-container').style.display = 'flex';
+                    document.getElementById('host-dashboard').style.display = 'none';
+                }
             });
-            initHostCameras();
         }
 
-        // --- PLAYER LOGIC ---
-        function initPlayer() {
-            const roomDiv = document.getElementById('room-buttons');
+        // --- PLAYER INITIALIZATION ---
+        function initPlayerUI() {
+            const grid = document.getElementById('room-buttons');
+            grid.innerHTML = "";
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
+                b.className = "room-btn";
                 b.innerText = room;
-                b.onclick = () => db.ref(`players/${myId}/currentRoom`).set(room);
-                roomDiv.appendChild(b);
+                b.onclick = () => {
+                    db.ref(`players/${myId}/currentRoom`).set(room);
+                    document.querySelectorAll('.room-btn').forEach(btn => btn.classList.remove('active-room'));
+                    b.classList.add('active-room');
+                };
+                grid.appendChild(b);
             });
 
             db.ref(`players/${myId}`).on('value', snap => {
@@ -133,57 +195,87 @@
                 if (data && data.role) {
                     document.getElementById('player-setup').style.display = 'none';
                     document.getElementById('player-game').style.display = 'block';
-                    document.getElementById('role-text').innerText = "YOU ARE: " + data.role.toUpperCase();
+                    document.getElementById('role-text').innerText = "ROLE: " + data.role.toUpperCase();
                     document.getElementById('role-text').className = data.role + "-text";
-                    if(data.role === 'impostor') document.getElementById('kill-btn').style.display = 'block';
+                    document.getElementById('player-status-indicator').innerText = "STATUS: " + data.status.toUpperCase();
+                    
+                    if(data.role === 'impostor' && data.status === 'alive') {
+                        document.getElementById('kill-btn').style.display = 'block';
+                    } else {
+                        document.getElementById('kill-btn').style.display = 'none';
+                    }
+
+                    if(data.status === 'ghost') {
+                        document.body.style.filter = "grayscale(100%)";
+                    }
                 }
             });
         }
 
-        function joinGame() {
-            const name = document.getElementById('playerNameInput').value;
-            db.ref(`players/${myId}`).set({ name: name, status: 'alive', currentRoom: 'Lobby' });
-        }
-
-        // --- TABLET LOGIC ---
+        // --- TABLET INITIALIZATION ---
         function initTabletSelection() {
             const div = document.getElementById('tablet-room-selection');
+            div.innerHTML = "";
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
+                b.className = "menu-btn";
                 b.innerText = room;
-                b.onclick = () => startTablet(room);
+                b.onclick = () => {
+                    document.getElementById('tablet-setup').style.display = 'none';
+                    document.getElementById('tablet-active').style.display = 'block';
+                    document.getElementById('tablet-room-name').innerText = room;
+                    monitorRoomTasks(room);
+                };
                 div.appendChild(b);
             });
         }
 
-        function startTablet(room) {
-            document.getElementById('tablet-setup').style.display = 'none';
-            document.getElementById('tablet-active').style.display = 'block';
-            document.getElementById('tablet-room-name').innerText = room + " Station";
-            monitorRoomTasks(room);
-        }
-
-        // --- CAMERA LOGIC ---
+        // --- CAMERA INITIALIZATION ---
         function initCameraSelection() {
             const div = document.getElementById('camera-room-selection');
+            div.innerHTML = "";
             ROOMS.forEach(room => {
                 let b = document.createElement('button');
+                b.className = "menu-btn";
                 b.innerText = room;
                 b.onclick = () => startCameraFeed(room);
                 div.appendChild(b);
             });
         }
+
+        // Listen for Global Meetings
+        db.ref('meeting').on('value', snap => {
+            document.getElementById('meeting-overlay').style.display = snap.val() ? 'flex' : 'none';
+        });
     </script>
 
     <style>
-        /* ADD THIS TO YOUR style.css or keep here */
-        .menu-grid { display: flex; flex-direction: column; align-items: center; gap: 20px; margin-top: 50px; }
-        .menu-btn { width: 300px; height: 80px; font-weight: bold; border-radius: 15px; border: 4px solid #fff; transition: 0.3s; }
-        .menu-btn:hover { background: #fff; color: #000; transform: scale(1.05); }
-        .role-section { width: 100%; height: 100vh; padding: 20px; box-sizing: border-box; }
-        .glitch { font-size: 4rem; color: #ff3333; text-shadow: 2px 2px #33ffff; }
-        .danger-btn { background: #ff0000; color: white; padding: 20px; width: 100%; font-size: 2rem; margin-top: 20px; }
-        #localVideo { width: 100%; max-width: 600px; border: 5px solid #333; }
+        /* Shared Table Styles */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #1a1a1a; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #333; }
+        th { color: #33ffff; font-size: 0.8rem; }
+        
+        .host-container { display: flex; gap: 20px; padding: 20px; }
+        .settings-panel { width: 30%; background: #222; padding: 20px; border-radius: 10px; border: 1px solid #444; text-align: left; }
+        .player-lobby { width: 70%; background: #222; padding: 20px; border-radius: 10px; border: 1px solid #444; }
+        
+        .room-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+        .room-btn { padding: 15px; background: #333; color: white; border: 1px solid #555; border-radius: 5px; }
+        .active-room { background: #33ffff !important; color: black !important; font-weight: bold; }
+        
+        .danger-btn { background: #ff3333; color: white; width: 100%; padding: 20px; font-size: 1.5rem; border: none; border-radius: 10px; margin-bottom: 10px; cursor: pointer; }
+        .report-btn { background: #ffff33; color: black; width: 100%; padding: 15px; font-weight: bold; border-radius: 10px; border: none; cursor: pointer; }
+        
+        .live-tag { color: red; font-weight: bold; animation: blink 1s infinite; }
+        @keyframes blink { 0% {opacity:1;} 50% {opacity:0.2;} 100% {opacity:1;} }
+        
+        .meeting-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(200,0,0,0.9); z-index: 10000; display:flex; justify-content:center; align-items:center; text-align:center; }
+        .meeting-box { background: #000; padding: 40px; border: 5px solid white; border-radius: 20px; }
+        
+        /* Utility */
+        .done-btn { background: #00ff00 !important; color: black; }
+        .task-btn { background: #444; color: white; padding: 10px; margin: 5px; width: 100%; border: 1px solid #666; }
+        .player-task-card { background: #222; padding: 15px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid #33ffff; }
     </style>
 </body>
 </html>

@@ -17,7 +17,7 @@ if (!firebase.apps.length) {
 const db = firebase.database();
 
 // Persistent Device ID
-const myId = localStorage.getItem('amongUsPlayerId') || "p_" + Math.floor(Math.random() * 10000);
+const myId = localStorage.getItem('amongUsPlayerId') || "p_" + Math.floor(Math.random() * 100000);
 localStorage.setItem('amongUsPlayerId', myId);
 
 // --- 2. GAME CONSTANTS ---
@@ -34,55 +34,26 @@ const TASK_POOL = [
     { name: "Clean Filter", icon: "🧹" },
     { name: "Asteroids", icon: "☄️" },
     { name: "Swipe Card", icon: "💳" },
-    { name: "Manifold", icon: "🔢" }
+    { name: "Manifold", icon: "🔢" },
+    { name: "Align Engine Output", icon: "🚀" },
+    { name: "Start Reactor", icon: "☢️" }
 ];
 
-// --- 3. SHARED GAME LOGIC ---
+// --- 3. PLAYER LOGIC ---
 
-// Start Game (Host only)
-function startGame() {
-    db.ref('players').once('value', snapshot => {
-        const players = snapshot.val();
-        if (!players) return alert("No players joined!");
-        
-        const ids = Object.keys(players);
-        const pCount = ids.length;
-
-        // Role Logic: 4+ players = 1 imp, 6+ = 2 imp, 9+ = 3 imp
-        let impCount = 1;
-        if (pCount >= 9) impCount = 3;
-        else if (pCount >= 6) impCount = 2;
-
-        const shuffled = ids.sort(() => 0.5 - Math.random());
-        const updates = {};
-        
-        shuffled.forEach((id, index) => {
-            const role = index < impCount ? 'impostor' : 'crewmate';
-            const myTasks = [];
-            // Assign 4 random tasks across random rooms
-            for(let i=0; i<4; i++) {
-                myTasks.push({
-                    id: 't' + i + "_" + Math.floor(Math.random()*100),
-                    name: TASK_POOL[Math.floor(Math.random() * TASK_POOL.length)].name,
-                    room: ROOMS[Math.floor(Math.random() * ROOMS.length)],
-                    done: false
-                });
-            }
-            
-            updates[`players/${id}/role`] = role;
-            updates[`players/${id}/status`] = 'alive';
-            updates[`players/${id}/tasks`] = myTasks;
-            updates[`players/${id}/currentRoom`] = 'Lobby';
-        });
-
-        updates['gameState'] = 'playing';
-        updates['meeting'] = false;
-        updates['gameStats/completedTasks'] = 0;
-        db.ref().update(updates);
+function joinGame() {
+    const nameInput = document.getElementById('playerNameInput');
+    const name = nameInput ? nameInput.value.trim() : "Player";
+    if (!name) return alert("Please enter a name!");
+    
+    db.ref(`players/${myId}`).set({ 
+        name: name, 
+        status: 'alive', 
+        currentRoom: 'Lobby',
+        role: 'crewmate' // Default, will change on start
     });
 }
 
-// Kill Action (Impostor only)
 function tryKill() {
     db.ref('players').once('value', snap => {
         const allPlayers = snap.val();
@@ -100,11 +71,10 @@ function tryKill() {
                 return;
             }
         }
-        alert("No crewmates in this room!");
+        alert("No living crewmates in this room!");
     });
 }
 
-// Emergency Meeting
 function callMeeting() {
     db.ref('meeting').set(true);
 }
@@ -113,69 +83,120 @@ function endMeeting() {
     db.ref('meeting').set(false);
 }
 
-// --- 4. TABLET & TASK TRACKING ---
+// --- 4. HOST LOGIC ---
 
-function monitorRoomTasks(roomName) {
-    db.ref('players').on('value', snap => {
-        const players = snap.val();
-        const container = document.getElementById('active-tasks-container');
-        if(!container) return;
-        container.innerHTML = "";
-        
-        for(let id in players) {
+// Host: Listen for Player Updates (Updates Lobby Table & Dashboard)
+db.ref('players').on('value', snap => {
+    const players = snap.val() || {};
+    
+    // 1. Update Lobby Table (if on host screen)
+    const tableBody = document.getElementById('player-list-body');
+    const countSpan = document.getElementById('player-count');
+    
+    if (tableBody && countSpan) {
+        countSpan.innerText = Object.keys(players).length;
+        tableBody.innerHTML = "";
+
+        for (let id in players) {
             const p = players[id];
-            // Only show if player is in this room
-            if(p.currentRoom === roomName) {
-                const playerDiv = document.createElement('div');
-                playerDiv.className = "player-task-card";
-                
-                let html = `<h3>${p.name} ${p.status === 'ghost' ? '(GHOST)' : ''}</h3>`;
-                
-                // Show tasks (Real or Fake)
-                const roomTasks = (p.tasks || []).filter(t => t.room === roomName);
-                if(roomTasks.length > 0) {
-                    roomTasks.forEach(t => {
-                        html += `
-                            <button class="${t.done ? 'done-btn' : 'task-btn'}" 
-                                    onclick="completeTask('${id}', '${t.id}')">
-                                ${t.name} ${t.done ? '✅' : ''}
-                            </button>`;
-                    });
-                } else {
-                    html += `<p>No tasks in this room.</p>`;
-                }
-                playerDiv.innerHTML = html;
-                container.appendChild(playerDiv);
-            }
+            tableBody.innerHTML += `
+                <tr>
+                    <td>${p.name}</td>
+                    <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
+                    <td>${p.currentRoom || 'Lobby'}</td>
+                    <td><button style="background:#550000; color:white; border:none; padding:5px; cursor:pointer;" onclick="kickPlayer('${id}')">KICK</button></td>
+                </tr>
+            `;
         }
-    });
-}
+    }
 
-function completeTask(playerId, taskId) {
-    db.ref(`players/${playerId}/tasks`).once('value', snap => {
-        const tasks = snap.val();
-        const updated = tasks.map(t => {
-            if(t.id === taskId) return {...t, done: true};
-            return t;
+    // 2. Update In-Game Dashboard (if on host screen)
+    updateHostDashboard(players);
+});
+
+function startGame() {
+    const impLogicSelect = document.getElementById('setting-imp-logic');
+    const taskCountInput = document.getElementById('setting-task-count');
+    
+    const impLogic = impLogicSelect ? impLogicSelect.value : 'auto';
+    const taskCount = taskCountInput ? parseInt(taskCountInput.value) : 4;
+
+    db.ref('players').once('value', snapshot => {
+        const players = snapshot.val();
+        if (!players || Object.keys(players).length < 2) return alert("Need at least 2 players for testing!");
+        
+        const ids = Object.keys(players);
+        const pCount = ids.length;
+
+        // Calculate Impostors based on Setting
+        let impCount = 1;
+        if (impLogic === 'auto') {
+            if (pCount >= 9) impCount = 3;
+            else if (pCount >= 6) impCount = 2;
+        } else {
+            impCount = parseInt(impLogic);
+        }
+
+        const shuffled = ids.sort(() => 0.5 - Math.random());
+        const updates = {};
+        
+        shuffled.forEach((id, index) => {
+            const role = index < impCount ? 'impostor' : 'crewmate';
+            const myTasks = [];
+            
+            // Assign tasks to random rooms
+            for(let i=0; i < taskCount; i++) {
+                myTasks.push({
+                    id: 't' + Math.floor(Math.random() * 10000),
+                    name: TASK_POOL[Math.floor(Math.random() * TASK_POOL.length)].name,
+                    room: ROOMS[Math.floor(Math.random() * ROOMS.length)],
+                    done: false
+                });
+            }
+            
+            updates[`players/${id}/role`] = role;
+            updates[`players/${id}/status`] = 'alive';
+            updates[`players/${id}/tasks`] = myTasks;
         });
-        db.ref(`players/${playerId}/tasks`).set(updated);
+
+        updates['gameState'] = 'playing';
+        updates['meeting'] = false;
+        db.ref().update(updates);
     });
 }
 
-// --- 5. HOST DASHBOARD LOGIC ---
+function kickPlayer(id) {
+    if(confirm("Kick this player?")) {
+        db.ref(`players/${id}`).remove();
+    }
+}
+
+function resetGame() {
+    if(confirm("Reset the entire game? All roles and tasks will be cleared.")) {
+        db.ref('/').set({ 
+            gameState: 'lobby',
+            meeting: false,
+            cameras: {}
+        });
+        location.reload();
+    }
+}
 
 function updateHostDashboard(players) {
     const board = document.getElementById('status-board');
-    if(!board) return;
+    const progress = document.getElementById('task-progress-bar');
+    if(!board || !progress) return; // Only run on Host screen
 
     let total = 0;
     let done = 0;
+    let html = "";
     
-    let html = "<h3>Crew Status</h3>";
     for(let id in players) {
         const p = players[id];
-        html += `<div class="status-row ${p.status}">
-                    ${p.name}: ${p.status.toUpperCase()} (${p.currentRoom || 'Lobby'})
+        const statusColor = p.status === 'alive' ? '#00ff00' : '#ff0000';
+        html += `<div style="background:#333; padding:10px; margin-bottom:5px; border-left:5px solid ${statusColor};">
+                    <b>${p.name}</b>: ${p.status.toUpperCase()} <br>
+                    <small>Location: ${p.currentRoom || 'Unknown'}</small>
                  </div>`;
         
         (p.tasks || []).forEach(t => {
@@ -185,36 +206,109 @@ function updateHostDashboard(players) {
     }
     board.innerHTML = html;
 
-    const progress = document.getElementById('task-progress-bar');
-    if(progress) {
-        const percent = total === 0 ? 0 : (done / total) * 100;
-        progress.style.width = percent + "%";
+    const percent = total === 0 ? 0 : (done / total) * 100;
+    progress.style.width = percent + "%";
+    
+    if (percent >= 100 && total > 0) {
+        progress.style.background = "#00ff00";
+        // Prevent multiple alerts
+        if (progress.getAttribute('data-won') !== 'true') {
+            progress.setAttribute('data-won', 'true');
+            setTimeout(() => alert("CREWMATES WIN BY TASKS!"), 500);
+        }
     }
+}
+
+// --- 5. TABLET & TASK LOGIC ---
+
+function monitorRoomTasks(roomName) {
+    db.ref('players').on('value', snap => {
+        const players = snap.val();
+        const container = document.getElementById('active-tasks-container');
+        if(!container) return;
+        
+        container.innerHTML = "";
+        
+        for(let id in players) {
+            const p = players[id];
+            
+            // Only show tasks if the player's phone says they are in THIS room
+            if(p.currentRoom === roomName) {
+                const playerDiv = document.createElement('div');
+                playerDiv.className = "player-task-card";
+                
+                let html = `<h3>${p.name} ${p.status === 'ghost' ? '👻' : ''}</h3>`;
+                
+                // Filter this player's tasks to only show ones assigned to this room
+                const roomTasks = (p.tasks || []).filter(t => t.room === roomName);
+                
+                if(roomTasks.length > 0) {
+                    roomTasks.forEach(t => {
+                        const btnClass = t.done ? 'task-btn done-btn' : 'task-btn';
+                        const check = t.done ? '✅' : '';
+                        html += `
+                            <button class="${btnClass}" onclick="completeTask('${id}', '${t.id}')">
+                                ${t.name} ${check}
+                            </button>`;
+                    });
+                } else {
+                    html += `<p style="color:#aaa;">No tasks here.</p>`;
+                }
+                
+                playerDiv.innerHTML = html;
+                container.appendChild(playerDiv);
+            }
+        }
+    });
+}
+
+function completeTask(playerId, taskId) {
+    db.ref(`players/${playerId}/tasks`).once('value', snap => {
+        const tasks = snap.val() || [];
+        const updated = tasks.map(t => {
+            if(t.id === taskId) return {...t, done: true};
+            return t;
+        });
+        db.ref(`players/${playerId}/tasks`).set(updated);
+    });
 }
 
 // --- 6. CAMERA STREAMING LOGIC ---
 
-// Start local camera (Camera View)
+// Start local camera (runs on Camera Phone)
 async function startCameraFeed(roomName) {
     document.getElementById('camera-setup').style.display = 'none';
     document.getElementById('camera-active').style.display = 'block';
     document.getElementById('cam-display-name').innerText = roomName + " Camera";
 
-    const video = document.getElementById('localVideo');
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-    video.srcObject = stream;
+    try {
+        const video = document.getElementById('localVideo');
+        // Request back camera
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        video.srcObject = stream;
 
-    const peerId = 'among-us-cam-' + roomName.replace(/\s+/g, '-').toLowerCase();
-    const peer = new Peer(peerId);
+        // Register PeerJS with a specific ID based on the room name
+        const peerId = 'among-us-cam-' + roomName.replace(/\s+/g, '-').toLowerCase();
+        const peer = new Peer(peerId);
 
-    peer.on('open', (id) => {
-        db.ref(`cameras/${roomName}`).set({ peerId: id, status: 'online' });
-    });
+        peer.on('open', (id) => {
+            // Tell Firebase this camera is online so the host knows to connect
+            db.ref(`cameras/${roomName}`).set({ peerId: id, status: 'online' });
+        });
 
-    peer.on('call', call => call.answer(stream));
+        // Answer incoming requests from the Host Computer
+        peer.on('call', call => call.answer(stream));
+
+        // Cleanup on close
+        window.onbeforeunload = () => db.ref(`cameras/${roomName}`).remove();
+        
+    } catch (err) {
+        alert("Camera Error: " + err.message);
+        location.reload();
+    }
 }
 
-// Host connects to all cameras (Host View)
+// Host connects to all cameras (runs on Host Computer)
 function initHostCameras() {
     const hostPeer = new Peer('among-us-host-computer');
     
@@ -222,20 +316,27 @@ function initHostCameras() {
         const cameras = snap.val() || {};
         const grid = document.getElementById('camera-grid');
         if(!grid) return;
+        
         grid.innerHTML = "";
 
         for(let room in cameras) {
             const cam = cameras[room];
             const div = document.createElement('div');
-            div.className = "camera-box";
-            div.innerHTML = `<span>${room}</span><video id="v-${cam.peerId}" autoplay playsinline></video>`;
+            div.style = "width: 250px; height: 180px; background: black; border: 2px solid #555; position: relative; margin: 10px;";
+            div.innerHTML = `
+                <span style="position:absolute; top:5px; left:5px; background:rgba(0,0,0,0.7); color:white; padding:2px 5px; font-size:12px;">${room}</span>
+                <video id="v-${cam.peerId}" autoplay playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+            `;
             grid.appendChild(div);
 
+            // Establish connection and receive video stream
             const call = hostPeer.call(cam.peerId, null);
-            call.on('stream', remoteStream => {
-                const v = document.getElementById(`v-${cam.peerId}`);
-                if(v) v.srcObject = remoteStream;
-            });
+            if(call) {
+                call.on('stream', remoteStream => {
+                    const v = document.getElementById(`v-${cam.peerId}`);
+                    if(v) v.srcObject = remoteStream;
+                });
+            }
         }
     });
 }

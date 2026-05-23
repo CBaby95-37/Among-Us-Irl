@@ -1,62 +1,460 @@
+/* =========================================================
+   BASE STYLES & RESETS
+========================================================= */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
 body {
-    background-color: #121212;
-    color: white;
+    background-color: #0b0c10;
+    color: #c5c6c7;
     font-family: 'Courier New', Courier, monospace;
     text-align: center;
-    margin: 0;
     overflow-x: hidden;
 }
 
-.screen {
+h1, h2, h3 {
+    margin-bottom: 15px;
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid #333;
+    margin: 20px 0;
+}
+
+/* =========================================================
+   TYPOGRAPHY & EFFECTS
+========================================================= */
+.glitch {
+    font-size: 3.5rem;
+    color: #ff3333;
+    text-shadow: 2px 2px #33ffff, -2px -2px #000;
+    letter-spacing: 2px;
+    margin-top: 20px;
+    margin-bottom: 30px;
+    text-transform: uppercase;
+}
+
+.impostor-text {
+    color: #ff3333;
+    font-weight: bold;
+    font-size: 2.5rem;
+    text-shadow: 0 0 10px #ff3333;
+}
+
+.crewmate-text {
+    color: #33ffff;
+    font-weight: bold;
+    font-size: 2.5rem;
+    text-shadow: 0 0 10px #33ffff;
+}
+
+/* =========================================================
+   LAYOUTS & SCREENS
+========================================================= */
+.role-section {
+    width: 100%;
+    min-height: 100vh;
     padding: 20px;
-    display: none;
 }
 
-.active { display: block; }
+.menu-grid {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    margin-top: 30px;
+}
 
+/* =========================================================
+   BUTTONS & FORMS
+========================================================= */
 button {
-    background: #444;
-    color: white;
-    border: 2px solid white;
-    padding: 15px 30px;
-    margin: 10px;
-    font-size: 1.2rem;
+    font-family: 'Courier New', Courier, monospace;
     cursor: pointer;
+    text-transform: uppercase;
+    transition: all 0.2s ease-in-out;
 }
 
-button:hover { background: #666; }
+button:active {
+    transform: scale(0.95);
+}
 
-.impostor-text { color: #ff3333; font-weight: bold; font-size: 2rem; }
-.crewmate-text { color: #33ffff; font-weight: bold; font-size: 2rem; }
-
-#task-list {
-    text-align: left;
-    background: #222;
-    padding: 15px;
+.menu-btn {
+    width: 90%;
+    max-width: 350px;
+    height: 70px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    background: #1f2833;
+    color: #66fcf1;
+    border: 3px solid #45a29e;
     border-radius: 10px;
-    display: inline-block;
 }
 
-.ghost-mode {
-    filter: grayscale(100%) opacity(0.6);
+.menu-btn:hover {
+    background: #66fcf1;
+    color: #0b0c10;
+    box-shadow: 0 0 15px #66fcf1;
+}
+
+input[type="text"], input[type="number"], select {
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    background: #111;
+    color: #66fcf1;
+    border: 2px solid #45a29e;
+    border-radius: 5px;
+    font-size: 1.2rem;
+    font-family: inherit;
+}
+
+/* =========================================================
+   HOST DASHBOARD & SETTINGS
+========================================================= */
+.host-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.settings-panel {
+    flex: 1;
+    min-width: 300px;
+    background: #1a1a1d;
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px solid #333;
+    text-align: left;
+}
+
+.setting-item {
+    margin-bottom: 15px;
+}
+
+.setting-item label {
+    display: block;
+    font-size: 0.9rem;
+    color: #888;
+    margin-bottom: 5px;
+}
+
+.player-lobby {
+    flex: 2;
+    min-width: 400px;
+    background: #1a1a1d;
+    padding: 20px;
+    border-radius: 10px;
+    border: 2px solid #333;
+    overflow-x: auto;
+}
+
+/* Host Buttons */
+.start-game-btn {
+    width: 100%;
+    padding: 15px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    background: #00ff00;
+    color: black;
+    border: none;
+    border-radius: 5px;
+    margin-top: 15px;
+}
+
+.start-game-btn:hover { background: #33ff33; }
+
+.reset-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 1rem;
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+    border-radius: 5px;
+    margin-top: 10px;
+}
+
+.reset-btn:hover { background: #555; }
+
+.kick-btn {
+    background: #660000;
+    color: white;
+    border: 1px solid #ff3333;
+    padding: 8px 12px;
+    border-radius: 3px;
+    font-size: 0.9rem;
+}
+
+/* Tables */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    background: #111;
+}
+
+th, td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #222;
+}
+
+th {
+    color: #45a29e;
+    background: #0b0c10;
+    font-size: 0.9rem;
+    letter-spacing: 1px;
+}
+
+/* Host In-Game Dashboard */
+.main-layout {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 20px;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.security-section, .status-section {
+    background: #1a1a1d;
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid #333;
+}
+
+.security-section { flex: 2; min-width: 300px; }
+.status-section { flex: 1; min-width: 250px; text-align: left; }
+
+/* Progress Bar */
+.progress-container {
+    width: 90%;
+    max-width: 800px;
+    height: 35px;
+    background: #222;
+    border: 3px solid #555;
+    border-radius: 20px;
+    margin: 20px auto;
+    overflow: hidden;
+}
+
+#task-progress-bar {
+    height: 100%;
+    background: #00ff00;
+    width: 0%;
+    transition: width 0.5s ease, background 0.5s ease;
+    box-shadow: 0 0 10px #00ff00;
+}
+
+/* =========================================================
+   PLAYER PHONE UI
+========================================================= */
+#role-reveal-box {
+    background: #111;
+    border: 2px solid #333;
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+#player-status-indicator {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: #888;
+}
+
+.room-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin: 20px 0;
+}
+
+.room-btn {
+    padding: 15px 5px;
+    background: #1f2833;
+    color: #c5c6c7;
+    border: 2px solid #45a29e;
+    border-radius: 8px;
+    font-size: 1rem;
+}
+
+.active-room {
+    background: #45a29e !important;
+    color: #0b0c10 !important;
+    font-weight: bold;
+    box-shadow: 0 0 10px #45a29e;
+}
+
+.player-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.danger-btn {
+    background: #cc0000;
+    color: white;
+    padding: 25px;
+    font-size: 2rem;
+    font-weight: bold;
+    border: 4px solid #ff3333;
+    border-radius: 15px;
+    box-shadow: 0 0 15px rgba(255, 0, 0, 0.5);
+}
+
+.danger-btn:hover { background: #ff3333; }
+
+.report-btn {
+    background: #e6e600;
+    color: black;
+    padding: 20px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    border: 4px solid #ffff66;
+    border-radius: 15px;
+}
+
+.report-btn:hover { background: #ffff66; }
+
+/* =========================================================
+   TABLET UI (TASK STATION)
+========================================================= */
+#active-tasks-container {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.player-task-card {
+    background: #1a1a1d;
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    border-left: 8px solid #45a29e;
+    text-align: left;
+}
+
+.player-task-card h3 {
+    color: white;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 5px;
+}
+
+.task-btn {
+    display: block;
+    width: 100%;
+    background: #222;
+    color: white;
+    padding: 15px;
+    margin-bottom: 10px;
+    font-size: 1.1rem;
+    border: 1px solid #555;
+    border-radius: 5px;
+    text-align: left;
+}
+
+.done-btn {
+    background: #004d00 !important;
+    color: #00ff00 !important;
+    border-color: #00ff00 !important;
+    text-decoration: line-through;
     pointer-events: none;
 }
 
-.camera-feed {
-    width: 300px;
-    height: 200px;
-    background: black;
-    border: 3px solid #555;
-    margin: 5px;
-    display: inline-block;
+/* =========================================================
+   CAMERA UI & ANIMATIONS
+========================================================= */
+#camera-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
 }
 
+#localVideo {
+    width: 100%;
+    max-width: 500px;
+    border: 5px solid #333;
+    border-radius: 10px;
+    background: black;
+    margin: 20px auto;
+    display: block;
+}
+
+.live-tag {
+    color: #ff3333;
+    font-weight: bold;
+    font-size: 1.5rem;
+    margin: 10px 0;
+    animation: blink 1.5s infinite;
+}
+
+@keyframes blink {
+    0% { opacity: 1; }
+    50% { opacity: 0.3; }
+    100% { opacity: 1; }
+}
+
+/* =========================================================
+   MEETING OVERLAY
+========================================================= */
 .meeting-overlay {
     position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(255, 0, 0, 0.8);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
+    top: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 100%; 
+    background: rgba(150, 0, 0, 0.95); 
+    z-index: 9999; 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    flex-direction: column;
+}
+
+.meeting-box {
+    background: #0b0c10;
+    padding: 40px;
+    border: 5px solid #ff3333;
+    border-radius: 20px;
+    box-shadow: 0 0 50px rgba(255, 0, 0, 0.8);
+    max-width: 90%;
+}
+
+.meeting-box h1 {
+    color: white;
+    font-size: 3rem;
+    margin-top: 20px;
+}
+
+.meeting-box p {
+    font-size: 1.2rem;
+    margin-bottom: 20px;
+}
+
+#host-resume-btn {
+    background: #45a29e;
+    color: #0b0c10;
+    padding: 15px 30px;
+    font-size: 1.5rem;
+    font-weight: bold;
+    border: none;
+    border-radius: 10px;
+    width: 100%;
+}
+
+#host-resume-btn:hover {
+    background: #66fcf1;
 }
