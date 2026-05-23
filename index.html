@@ -15,7 +15,7 @@
 </head>
 <body>
 
-    <!-- ROLE SELECTOR -->
+    <!-- ROLE SELECTOR: The First Screen you see -->
     <div id="role-selector-screen">
         <h1 class="glitch">AMONG US IRL</h1>
         <p>Choose the role for this device:</p>
@@ -27,7 +27,7 @@
         </div>
     </div>
 
-    <!-- 1. HOST COMPUTER VIEW -->
+    <!-- 1. HOST COMPUTER VIEW (Settings & Monitoring) -->
     <div id="host-view" class="role-section" style="display:none;">
         <h1 class="glitch">COMMAND CENTER</h1>
         
@@ -68,6 +68,19 @@
             <div class="progress-container">
                 <div id="task-progress-bar" style="width:0%"></div>
             </div>
+
+            <!-- ADMIN RADAR MAP PANEL (Togglable) -->
+            <div class="admin-table-panel" style="background:#1a1a1d; padding:20px; border-radius:10px; border:2px solid #333; margin-bottom:20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="color: #00ff00; margin: 0;">🛰️ ADMIN RADAR MAP</h3>
+                    <button id="admin-toggle-btn" class="room-btn" onclick="toggleAdminMap()" style="width: auto; padding: 10px 25px; margin:0; background: #333;">TURN ON</button>
+                </div>
+                <div id="admin-map-container" style="display: none; text-align: center;">
+                    <canvas id="admin-canvas" width="600" height="400" style="background: #051105; border: 3px solid #00ff00; border-radius: 10px; box-shadow: 0 0 20px rgba(0,255,0,0.3); max-width:100%;"></canvas>
+                    <p style="color: #00ff00; font-size: 0.8rem; margin-top: 5px; font-family: monospace;">Scale: 1 grid square = 5 meters. Origin (0,0) is Host Computer.</p>
+                </div>
+            </div>
+
             <div class="main-layout">
                 <div class="security-section">
                     <h3>LIVE CCTV FEEDS</h3>
@@ -97,8 +110,8 @@
             <hr>
             
             <div class="radar-container" style="background:#111; padding:20px; border-radius:10px; border:2px solid #333;">
-                <h3 style="color: #66fcf1; margin-bottom: 5px;">🛰️ RADAR POSITIONED</h3>
-                <p style="color: #888; font-size: 0.9rem;">Your position relative to the host is active. Keep this tab open.</p>
+                <h3 style="color: #66fcf1; margin-bottom: 5px;">🛰️ GPS RADAR ACTIVE</h3>
+                <p style="color: #888; font-size: 0.9rem;">Your position is being tracked automatically relative to the Host. Keep this page open.</p>
             </div>
             
             <hr>
@@ -117,7 +130,7 @@
         </div>
         <div id="tablet-active" style="display:none;">
             <h1 id="tablet-room-name" style="color:#33ffff"></h1>
-            <p id="calibration-status" style="color: #ffff33; margin-bottom: 20px;">🛰️ Calibrating Relative Cartesian Coords...</p>
+            <p id="calibration-status" style="color: #ffff33; margin-bottom: 20px;">🛰️ Calibrating Relative Coordinates...</p>
             <div id="active-tasks-container"></div>
         </div>
     </div>
@@ -141,7 +154,11 @@
         <div class="meeting-box">
             <h1 style="color: #ff3333; margin-bottom: 5px;">🚨 EMERGENCY MEETING 🚨</h1>
             <p style="color: #fff;">Discuss and Vote! Ghosts cannot vote.</p>
-            <div id="voting-list" class="voting-grid"></div>
+            
+            <div id="voting-list" class="voting-grid">
+                <!-- Players generated here by JS -->
+            </div>
+            
             <div class="voting-actions">
                 <button id="skip-vote-btn" class="skip-btn" onclick="castVote('skip')">⏭️ SKIP VOTE</button>
                 <button id="host-end-vote-btn" class="tally-btn" style="display:none;" onclick="tallyVotes()">TALLY VOTES & END</button>
@@ -152,6 +169,9 @@
     <!-- Script Links -->
     <script src="app.js"></script>
     <script>
+        let adminMapActive = false;
+        let mapDrawInterval = null;
+
         // MASTER NAVIGATION
         function switchView(viewId) {
             document.getElementById('role-selector-screen').style.display = 'none';
@@ -168,14 +188,14 @@
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
             
-            // Set Host Base Coordinates (Origin point (0,0))
+            // Capture Host Base Coordinates
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(position => {
                     db.ref('baseCoords').set({
                         lat: position.coords.latitude,
                         lng: position.coords.longitude
                     });
-                    console.log("Host base coordinates initialized.");
+                    console.log("Host base coordinates established.");
                 }, err => {
                     console.error("Host GPS setup failed: " + err.message);
                 }, { enableHighAccuracy: true });
@@ -191,6 +211,118 @@
                     document.getElementById('host-dashboard').style.display = 'none';
                 }
             });
+        }
+
+        // --- ADMIN MAP TOGGLE & CANVAS DRAW ENGINE ---
+        function toggleAdminMap() {
+            adminMapActive = !adminMapActive;
+            const container = document.getElementById('admin-map-container');
+            const btn = document.getElementById('admin-toggle-btn');
+            
+            if (adminMapActive) {
+                container.style.display = 'block';
+                btn.innerText = "TURN OFF";
+                btn.style.background = "#ff3333";
+                startMapLoop();
+            } else {
+                container.style.display = 'none';
+                btn.innerText = "TURN ON";
+                btn.style.background = "#333";
+                if(mapDrawInterval) clearInterval(mapDrawInterval);
+            }
+        }
+
+        function startMapLoop() {
+            if(mapDrawInterval) clearInterval(mapDrawInterval);
+            
+            // Draw frame 10 times per second for smooth pulsing animations
+            mapDrawInterval = setInterval(() => {
+                db.ref().once('value', snap => {
+                    const data = snap.val() || {};
+                    const players = data.players || {};
+                    const stations = data.stations || {};
+                    if(adminMapActive) {
+                        drawAdminMap(players, stations);
+                    }
+                });
+            }, 100);
+        }
+
+        function drawAdminMap(players, stations) {
+            const canvas = document.getElementById('admin-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width;
+            const H = canvas.height;
+            
+            // Clear Frame
+            ctx.fillStyle = "#051105";
+            ctx.fillRect(0, 0, W, H);
+            
+            // Draw Radar Grid Lines (1 grid space = 5 meters)
+            ctx.strokeStyle = "rgba(0, 255, 0, 0.12)";
+            ctx.lineWidth = 1;
+            const gridSize = 50; 
+            
+            for (let x = 0; x < W; x += gridSize) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+            }
+            for (let y = 0; y < H; y += gridSize) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+            }
+            
+            // Define Center Graph Coordinates
+            const cx = W / 2;
+            const cy = H / 2;
+            const scale = 10; // 10 pixels = 1 meter
+            
+            // Draw Host (0,0) Center Node
+            ctx.fillStyle = "#ffff33";
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, Math.PI*2);
+            ctx.fill();
+            ctx.font = "10px monospace";
+            ctx.fillText("HOST (0,0)", cx + 10, cy - 4);
+            
+            // Draw Registered Rooms (Stations)
+            for (let room in stations) {
+                const s = stations[room];
+                if (s.coords) {
+                    const sx = cx + (s.coords.x * scale);
+                    const sy = cy - (s.coords.y * scale); // Invert Y axis
+                    
+                    ctx.fillStyle = "#33ffff";
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, 7, 0, Math.PI*2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = "#33ffff";
+                    ctx.font = "bold 10px monospace";
+                    ctx.fillText(room.toUpperCase(), sx + 10, sy + 3);
+                }
+            }
+            
+            // Draw Anonymous Player Radar Blips
+            for (let id in players) {
+                const p = players[id];
+                if (p.coords && p.status === 'alive') {
+                    const px = cx + (p.coords.x * scale);
+                    const py = cy - (p.coords.y * scale);
+                    
+                    // Radar Blip Pulsing outer circle
+                    const pulseRadius = 6 + (Date.now() % 1000) / 100;
+                    ctx.strokeStyle = "rgba(255, 255, 0, 0.4)";
+                    ctx.beginPath();
+                    ctx.arc(px, py, pulseRadius, 0, Math.PI*2);
+                    ctx.stroke();
+                    
+                    // Center Blip Node
+                    ctx.fillStyle = "#ffff33";
+                    ctx.beginPath();
+                    ctx.arc(px, py, 4, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
         }
 
         // --- PLAYER INITIALIZATION ---
@@ -235,7 +367,6 @@
                     document.getElementById('tablet-active').style.display = 'block';
                     document.getElementById('tablet-room-name').innerText = room.toUpperCase() + " STATION";
                     
-                    // Fetch the Host base coordinates to establish relative offsets for the tablet
                     db.ref('baseCoords').once('value', baseSnap => {
                         const base = baseSnap.val();
                         if (!base) {
