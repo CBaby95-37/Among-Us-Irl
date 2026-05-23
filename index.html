@@ -3,11 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Among Us IRL - Hub</title>
+    <title>Among Us IRL - Master Hub</title>
     <link rel="stylesheet" href="style.css">
     
+    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    
+    <!-- PeerJS for Video Streaming -->
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 </head>
 <body>
 
@@ -34,8 +38,16 @@
                 <button class="start-game-btn" onclick="startGame()">🚀 START MISSION</button>
                 <button class="reset-btn" onclick="resetGame()">♻️ RESET ALL</button>
             </div>
+            
             <div class="player-lobby">
                 <h3>CONNECTED PLAYERS (<span id="player-count">0</span>)</h3>
+                
+                <!-- DYNAMIC QR CODE DISPLAY -->
+                <div id="lobby-qr-container" style="margin: 15px 0; background: white; padding: 12px; display: inline-block; border-radius: 10px; border: 3px solid #00ff00;">
+                    <img id="lobby-qr-image" src="" alt="Scan to Join" style="width: 150px; height: 150px; display: block; margin: 0 auto;">
+                    <p style="color: #000; font-size: 0.8rem; font-weight: bold; margin-top: 5px; font-family: monospace; letter-spacing: 1px;">SCAN TO JOIN</p>
+                </div>
+
                 <table><thead><tr><th>Name</th><th>Status</th><th>Relative Position</th><th>Action</th></tr></thead><tbody id="player-list-body"></tbody></table>
             </div>
         </div>
@@ -142,6 +154,10 @@
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
             
+            // Generate standard scannable QR Code pointing to current page URL
+            const joinUrl = window.location.origin + window.location.pathname;
+            document.getElementById('lobby-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(joinUrl)}`;
+
             // Set Host Base Coordinates (True Origin)
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(position => {
@@ -307,13 +323,11 @@
 
                 if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(position => {
-                        // Apply DGPS correction instantly to tablet configuration coordinates
                         const correctedLat = position.coords.latitude - drift.lat;
                         const correctedLng = position.coords.longitude - drift.lng;
 
                         localTabletCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
                         
-                        // Reveal room selector once coordinates are captured
                         document.getElementById('tablet-room-selection').style.display = 'grid';
                     }, err => alert("Calibration Error: " + err.message), { enableHighAccuracy: true });
                 }
