@@ -1,80 +1,88 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Room Tablet</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Among Us IRL - Task Station</title>
     <link rel="stylesheet" href="style.css">
-    <!-- 1. Firebase Core -->
-<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-<!-- 2. Firebase Database -->
-<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-<!-- 3. Your Logic -->
-<script src="app.js"></script>
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 </head>
 <body>
-    <div id="config">
-        <h2>Which room is this?</h2>
-        <button onclick="setRoom('Kitchen')">Kitchen</button>
-        <button onclick="setRoom('Living Room')">Living Room</button>
+
+    <!-- 1. TABLET SETUP SCREEN -->
+    <div id="tablet-setup" class="role-section">
+        <h1 class="glitch">TASK STATION SETUP</h1>
+        <h2>Assign this Tablet to a Room:</h2>
+        <p style="color:#aaa; margin-bottom: 20px;">The tablet will save its current location to detect nearby crewmates.</p>
+        <div id="tablet-room-selection" class="room-grid"></div>
     </div>
 
-    <div id="task-station" class="screen">
-        <h1 id="room-title"></h1>
-        <div id="active-tasks">
-            <!-- Dynamically populated when player is nearby -->
+    <!-- 2. ACTIVE TASK MONITORING SCREEN -->
+    <div id="tablet-active" class="role-section" style="display:none;">
+        <h1 id="tablet-room-name" style="color: #33ffff; text-shadow: 0 0 10px #33ffff;"></h1>
+        <p id="calibration-status" style="color: #ffff33; margin-bottom: 20px;">🛰️ Calibrating GPS coordinates...</p>
+        
+        <div id="active-tasks-container">
+            <!-- Dynamically populated when players are within physical radius -->
         </div>
+        
+        <hr>
+        <button onclick="location.reload()" class="reset-btn" style="max-width: 200px; margin: 20px auto; display: block;">⚙️ Change Room</button>
     </div>
 
+    <!-- Link to the shared logic file -->
     <script src="app.js"></script>
     <script>
-        let thisRoom = "";
-        function setRoom(name) {
-            thisRoom = name;
-            document.getElementById('config').style.display = 'none';
-            document.getElementById('task-station').classList.add('active');
-            document.getElementById('room-title').innerText = name + " Station";
-            startMonitoring();
+        window.onload = () => {
+            initTabletSetup();
+        };
+
+        function initTabletSetup() {
+            const div = document.getElementById('tablet-room-selection');
+            div.innerHTML = "";
+            
+            ROOMS.forEach(room => {
+                let b = document.createElement('button');
+                b.className = "menu-btn";
+                b.style.margin = "5px";
+                b.innerText = room;
+                b.onclick = () => {
+                    startTablet(room);
+                };
+                div.appendChild(b);
+            });
         }
 
-        function startMonitoring() {
-    db.ref('players').on('value', snap => {
-        const players = snap.val();
-        const taskArea = document.getElementById('active-tasks');
-        taskArea.innerHTML = "";
-        
-        for(let id in players) {
-            // If player is in THIS room
-            if(players[id].currentRoom === thisRoom) {
-                const p = players[id];
-                const playerBox = document.createElement('div');
-                playerBox.className = "player-task-card";
-                
-                // Show tasks if they have them in this room, OR show "fake" tasks if impostor
-                const roomTasks = (p.tasks || []).filter(t => t.room === thisRoom);
-                
-                let taskHtml = `<h3>${p.name}</h3>`;
-                
-                if (roomTasks.length > 0) {
-                    roomTasks.forEach(t => {
-                        const statusClass = t.done ? "done" : "pending";
-                        taskHtml += `<button class="${statusClass}" onclick="completeTask('${id}', '${t.id}')">
-                                        ${t.name} ${t.done ? '✅' : ''}
-                                     </button>`;
+        function startTablet(room) {
+            document.getElementById('tablet-setup').style.display = 'none';
+            document.getElementById('tablet-active').style.display = 'block';
+            document.getElementById('tablet-room-name').innerText = room.toUpperCase() + " STATION";
+            
+            // Get the tablet's location and save it as the reference position for this room
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const coords = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    
+                    db.ref(`stations/${room}/coords`).set(coords).then(() => {
+                        document.getElementById('calibration-status').innerHTML = "🛰️ LOCATION SAVED - RADAR ACTIVE";
+                        document.getElementById('calibration-status').style.color = "#00ff00";
+                        
+                        // Start tracking nearby players
+                        monitorRoomTasks(room);
                     });
-                } else {
-                    taskHtml += `<p>No tasks here.</p>`;
-                }
-                
-                playerBox.innerHTML = taskHtml;
-                taskArea.appendChild(playerBox);
+                }, err => {
+                    alert("Tablet GPS Error: Ensure location access is enabled on this browser.");
+                    location.reload();
+                }, { enableHighAccuracy: true });
+            } else {
+                alert("This device does not support GPS tracking.");
             }
-        }
-    });
-}
-        
-        function completeTask(pId, tId) {
-            // Logic to update progress bar on host
-            db.ref('gameStats/completedTasks').transaction(curr => (curr || 0) + 1);
-            alert("Task Complete!");
         }
     </script>
 </body>

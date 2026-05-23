@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Among Us IRL - Player Phone</title>
+    <title>Among Us IRL - Player</title>
     <link rel="stylesheet" href="style.css">
     
     <!-- Firebase SDKs -->
@@ -29,16 +29,16 @@
         <div id="player-status-indicator"></div>
         <hr>
         
-        <h3>YOUR LOCATION:</h3>
-        <p style="font-size: 0.9rem; color: #888; margin-bottom: 10px;">Select the room you are currently standing in.</p>
-        <div id="room-buttons" class="room-grid"></div>
+        <div class="radar-container">
+            <p style="font-size: 1.1rem; color: #66fcf1; font-weight: bold;">🛰️ GPS POSITION ACTIVE</p>
+            <p style="font-size: 0.8rem; color: #888;">Keep your browser open so tasks and impostors can detect you.</p>
+        </div>
         
         <hr>
         <div class="player-actions">
-            <!-- Kill button only shows if Impostor -->
+            <!-- Kill button displays automatically when a crewmate is within radius -->
             <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
             
-            <!-- Everyone gets the Report button -->
             <button class="report-btn" onclick="callMeeting()">🚨 REPORT / EMERGENCY</button>
         </div>
     </div>
@@ -63,33 +63,14 @@
     <!-- Link to the shared logic file -->
     <script src="app.js"></script>
     <script>
-        // --- INITIALIZE PLAYER UI ON LOAD ---
         window.onload = () => {
             initPlayerUI();
         };
 
         function initPlayerUI() {
-            // Generate Room Buttons dynamically from app.js ROOMS array
-            const grid = document.getElementById('room-buttons');
-            grid.innerHTML = "";
-            ROOMS.forEach(room => {
-                let b = document.createElement('button');
-                b.className = "room-btn";
-                b.innerText = room;
-                b.onclick = () => {
-                    db.ref(`players/${myId}/currentRoom`).set(room);
-                    // Visually highlight the selected room
-                    document.querySelectorAll('.room-btn').forEach(btn => btn.classList.remove('active-room'));
-                    b.classList.add('active-room');
-                };
-                grid.appendChild(b);
-            });
-
-            // Listen to my own player data for Role/Status changes
             db.ref(`players/${myId}`).on('value', snap => {
                 const data = snap.val();
                 
-                // If Host started the game and assigned a role
                 if (data && data.role) {
                     document.getElementById('player-setup').style.display = 'none';
                     document.getElementById('player-game').style.display = 'block';
@@ -98,21 +79,22 @@
                     document.getElementById('role-text').className = data.role + "-text";
                     document.getElementById('player-status-indicator').innerText = "STATUS: " + data.status.toUpperCase();
                     
-                    // Show Kill button if Impostor and Alive
-                    if(data.role === 'impostor' && data.status === 'alive') {
-                        document.getElementById('kill-btn').style.display = 'block';
+                    if (data.role === 'impostor' && data.status === 'alive') {
+                        // Start continuously checking for nearby crewmates
+                        startKillProximityCheck();
                     } else {
                         document.getElementById('kill-btn').style.display = 'none';
                     }
 
-                    // Turn screen grayscale if killed
                     if(data.status === 'ghost') {
                         document.body.style.filter = "grayscale(100%)";
                     } else {
                         document.body.style.filter = "none";
                     }
+                    
+                    // Activate player position updates
+                    startLocationTracking();
                 } else {
-                    // Reset to join screen if host resets the game
                     document.getElementById('player-setup').style.display = 'block';
                     document.getElementById('player-game').style.display = 'none';
                     document.body.style.filter = "none";
@@ -126,26 +108,21 @@
             const isMeeting = data.meeting;
             const overlay = document.getElementById('meeting-overlay');
 
-            // 1. Show/Hide Meeting Screen (Only if game has started)
             if (isMeeting && document.getElementById('player-game').style.display === 'block') {
                 overlay.style.display = 'flex';
                 
-                // 2. Render Players in Voting Screen
                 const players = data.players || {};
                 const votes = data.votes || {};
                 const list = document.getElementById('voting-list');
-                list.innerHTML = ""; // Clear current list
+                list.innerHTML = "";
                 
                 const myVote = votes[myId];
                 const amIAlive = players[myId] && players[myId].status === 'alive';
 
                 for(let id in players) {
                     const p = players[id];
-                    // Only show ALIVE players as vote options
                     if (p.status === 'alive') {
                         const hasVoted = votes[id] ? "✅ Voted" : "⏳ Thinking...";
-                        
-                        // Hide vote button if I am dead OR I already voted
                         let btnHtml = "";
                         if (amIAlive && !myVote) {
                             btnHtml = `<button class="vote-action-btn" onclick="castVote('${id}')">VOTE</button>`;
@@ -163,7 +140,6 @@
                     }
                 }
 
-                // UI toggles based on if the player has voted yet
                 if (amIAlive && !myVote) {
                     document.getElementById('skip-vote-btn').style.display = 'block';
                     document.getElementById('wait-msg').style.display = 'none';
@@ -177,12 +153,9 @@
             }
         });
 
-        // Listen for Ejection Results from Host
         db.ref('ejectionMessage').on('value', snap => {
             const msg = snap.val();
-            if (msg) {
-                alert("🗳️ RESULT: " + msg);
-            }
+            if (msg) alert("🗳️ RESULT: " + msg);
         });
     </script>
 </body>

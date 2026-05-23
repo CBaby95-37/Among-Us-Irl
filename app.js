@@ -10,17 +10,15 @@ const firebaseConfig = {
     measurementId: "G-WLKJG2Z4GY"
 };
 
-// Initialize Firebase
 if (!firebase.apps.length) {
     firebase.initializeApp(firebaseConfig);
 }
 const db = firebase.database();
 
-// Persistent Device ID
 const myId = localStorage.getItem('amongUsPlayerId') || "p_" + Math.floor(Math.random() * 100000);
 localStorage.setItem('amongUsPlayerId', myId);
 
-// --- 2. GAME CONSTANTS ---
+// --- 2. GAME CONSTANTS & SETTINGS ---
 const ROOMS = [
     "Living Room", "Boy's Bedroom", "Bathroom", 
     "Laundry Room", "Mya's Room", "Parents' Room", "Kitchen"
@@ -34,13 +32,52 @@ const TASK_POOL = [
     { name: "Clean Filter", icon: "🧹" },
     { name: "Asteroids", icon: "☄️" },
     { name: "Swipe Card", icon: "💳" },
-    { name: "Manifold", icon: "🔢" },
-    { name: "Align Engine Output", icon: "🚀" },
-    { name: "Start Reactor", icon: "☢️" }
+    { name: "Manifold", icon: "🔢" }
 ];
 
-// --- 3. PLAYER LOGIC ---
+const PROXIMITY_LIMIT = 4; // Distance in meters to activate tasks or actions
 
+// --- 3. GEOLOCATION MATH (HAVERSINE FORMULA) ---
+function getDistance(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return Infinity;
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // Returns distance in meters
+}
+
+// --- 4. PLAYER POSITION TRACKING ---
+function startLocationTracking() {
+    if (navigator.geolocation) {
+        navigator.geolocation.watchPosition(position => {
+            const coords = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                accuracy: position.coords.accuracy,
+                timestamp: Date.now()
+            };
+            db.ref(`players/${myId}/coords`).set(coords);
+        }, err => {
+            console.error("GPS Error: ", err.message);
+        }, {
+            enableHighAccuracy: true,
+            maximumAge: 1000,
+            timeout: 5000
+        });
+    } else {
+        alert("Geolocation is not supported on this device.");
+    }
+}
+
+// --- 5. PLAYER GAMEPLAY LOGIC ---
 function joinGame() {
     const nameInput = document.getElementById('playerNameInput');
     const name = nameInput ? nameInput.value.trim() : "Player";
@@ -49,8 +86,42 @@ function joinGame() {
     db.ref(`players/${myId}`).set({ 
         name: name, 
         status: 'alive', 
-        currentRoom: 'Lobby',
-        role: 'crewmate' // Default, will change on start
+        role: 'crewmate'
+    });
+    startLocationTracking();
+}
+
+// Continuous Proximity Check for Impostors to Kill
+function startKillProximityCheck() {
+    db.ref().on('value', snap => {
+        const data = snap.val() || {};
+        const players = data.players || {};
+        const me = players[myId];
+        
+        if (!me || me.role !== 'impostor' || me.status !== 'alive') return;
+        
+        let targetNearby = false;
+        const myCoords = me.coords;
+        
+        if (myCoords) {
+            for (let id in players) {
+                if (id !== myId && players[id].status === 'alive') {
+                    const pCoords = players[id].coords;
+                    if (pCoords) {
+                        const dist = getDistance(myCoords.lat, myCoords.lng, pCoords.lat, pCoords.lng);
+                        if (dist <= PROXIMITY_LIMIT) {
+                            targetNearby = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        const killBtn = document.getElementById('kill-btn');
+        if (killBtn) {
+            killBtn.style.display = targetNearby ? 'block' : 'none';
+        }
     });
 }
 
@@ -59,26 +130,24 @@ function tryKill() {
         const allPlayers = snap.val();
         const me = allPlayers[myId];
         
-        if (me.role !== 'impostor' || me.status !== 'alive') return;
+        if (me.role !== 'impostor' || me.status !== 'alive' || !me.coords) return;
 
         for (let id in allPlayers) {
-            if (id !== myId && 
-                allPlayers[id].currentRoom === me.currentRoom && 
-                allPlayers[id].status === 'alive') {
-                
-                db.ref(`players/${id}/status`).set('ghost');
-                alert("Target Neutralized.");
-                return;
+            if (id !== myId && allPlayers[id].status === 'alive' && allPlayers[id].coords) {
+                const dist = getDistance(me.coords.lat, me.coords.lng, allPlayers[id].coords.lat, allPlayers[id].coords.lng);
+                if (dist <= PROXIMITY_LIMIT) {
+                    db.ref(`players/${id}/status`).set('ghost');
+                    alert(`Eliminated ${allPlayers[id].name}!`);
+                    return;
+                }
             }
         }
-        alert("No living crewmates in this room!");
+        alert("No targets close enough!");
     });
 }
 
-// --- 4. MEETING & VOTING LOGIC ---
-
+// --- 6. MEETING & VOTING LOGIC ---
 function callMeeting() {
-    // Clear old votes and messages, then trigger meeting
     db.ref('votes').remove();
     db.ref('ejectionMessage').remove();
     db.ref('meeting').set(true);
@@ -96,7 +165,6 @@ function castVote(targetId) {
 }
 
 function tallyVotes() {
-    // Host only function to calculate the winner
     db.ref().once('value', snap => {
         const data = snap.val();
         const votes = data.votes || {};
@@ -125,31 +193,19 @@ function tallyVotes() {
         let message = "";
         if (!tie && ejectedId && ejectedId !== 'skip') {
             message = `${players[ejectedId].name} was ejected.`;
-            // Turn them into a ghost
             db.ref(`players/${ejectedId}/status`).set('ghost');
         } else {
             message = "No one was ejected (Tie or Skipped).";
         }
 
-        // Broadcast the result to everyone
         db.ref('ejectionMessage').set(message);
-        
-        // End the meeting
         db.ref('meeting').set(false);
     });
 }
 
-function endMeeting() {
-    db.ref('meeting').set(false);
-}
-
-// --- 5. HOST LOGIC ---
-
-// Host: Listen for Player Updates (Updates Lobby Table & Dashboard)
+// --- 7. HOST LOGIC ---
 db.ref('players').on('value', snap => {
     const players = snap.val() || {};
-    
-    // 1. Update Lobby Table (if on host screen)
     const tableBody = document.getElementById('player-list-body');
     const countSpan = document.getElementById('player-count');
     
@@ -163,14 +219,12 @@ db.ref('players').on('value', snap => {
                 <tr>
                     <td>${p.name}</td>
                     <td style="color:${p.status === 'alive' ? '#00ff00' : '#ff3333'}">${p.status.toUpperCase()}</td>
-                    <td>${p.currentRoom || 'Lobby'}</td>
+                    <td>GPS Active</td>
                     <td><button style="background:#550000; color:white; border:none; padding:5px; cursor:pointer;" onclick="kickPlayer('${id}')">KICK</button></td>
                 </tr>
             `;
         }
     }
-
-    // 2. Update In-Game Dashboard (if on host screen)
     updateHostDashboard(players);
 });
 
@@ -183,12 +237,11 @@ function startGame() {
 
     db.ref('players').once('value', snapshot => {
         const players = snapshot.val();
-        if (!players || Object.keys(players).length < 2) return alert("Need at least 2 players for testing!");
+        if (!players || Object.keys(players).length < 2) return alert("Need more players!");
         
         const ids = Object.keys(players);
         const pCount = ids.length;
 
-        // Calculate Impostors based on Setting
         let impCount = 1;
         if (impLogic === 'auto') {
             if (pCount >= 9) impCount = 3;
@@ -204,7 +257,6 @@ function startGame() {
             const role = index < impCount ? 'impostor' : 'crewmate';
             const myTasks = [];
             
-            // Assign tasks to random rooms
             for(let i=0; i < taskCount; i++) {
                 myTasks.push({
                     id: 't' + Math.floor(Math.random() * 10000),
@@ -234,12 +286,13 @@ function kickPlayer(id) {
 }
 
 function resetGame() {
-    if(confirm("Reset the game? Players stay in lobby, roles/tasks are cleared.")) {
+    if(confirm("Reset the game?")) {
         db.ref('gameState').set('lobby');
         db.ref('meeting').set(false);
         db.ref('cameras').remove();
         db.ref('votes').remove();
         db.ref('ejectionMessage').remove();
+        db.ref('stations').remove();
         
         db.ref('players').once('value', snap => {
             const players = snap.val();
@@ -248,6 +301,7 @@ function resetGame() {
                     db.ref(`players/${id}/status`).set('alive');
                     db.ref(`players/${id}/role`).set('crewmate');
                     db.ref(`players/${id}/tasks`).remove();
+                    db.ref(`players/${id}/coords`).remove();
                 }
             }
         });
@@ -258,7 +312,7 @@ function resetGame() {
 function updateHostDashboard(players) {
     const board = document.getElementById('status-board');
     const progress = document.getElementById('task-progress-bar');
-    if(!board || !progress) return; // Only run on Host screen
+    if(!board || !progress) return;
 
     let total = 0;
     let done = 0;
@@ -268,8 +322,7 @@ function updateHostDashboard(players) {
         const p = players[id];
         const statusColor = p.status === 'alive' ? '#00ff00' : '#ff0000';
         html += `<div style="background:#333; padding:10px; margin-bottom:5px; border-left:5px solid ${statusColor};">
-                    <b>${p.name}</b>: ${p.status.toUpperCase()} <br>
-                    <small>Location: ${p.currentRoom || 'Unknown'}</small>
+                    <b>${p.name}</b>: ${p.status.toUpperCase()}
                  </div>`;
         
         (p.tasks || []).forEach(t => {
@@ -281,56 +334,59 @@ function updateHostDashboard(players) {
 
     const percent = total === 0 ? 0 : (done / total) * 100;
     progress.style.width = percent + "%";
-    
-    if (percent >= 100 && total > 0) {
-        progress.style.background = "#00ff00";
-        // Prevent multiple alerts
-        if (progress.getAttribute('data-won') !== 'true') {
-            progress.setAttribute('data-won', 'true');
-            setTimeout(() => alert("CREWMATES WIN BY TASKS!"), 500);
-        }
-    }
 }
 
-// --- 6. TABLET & TASK LOGIC ---
-
+// --- 8. TABLET & PROXIMITY TASK MONITORING ---
 function monitorRoomTasks(roomName) {
-    db.ref('players').on('value', snap => {
-        const players = snap.val();
+    // Listen for changes on both players and station coordinates
+    db.ref().on('value', snap => {
+        const data = snap.val() || {};
+        const players = data.players || {};
+        const station = data.stations ? data.stations[roomName] : null;
         const container = document.getElementById('active-tasks-container');
-        if(!container) return;
+        
+        if (!container || !station || !station.coords) return;
         
         container.innerHTML = "";
-        
-        for(let id in players) {
+        let playersPresent = false;
+
+        for (let id in players) {
             const p = players[id];
             
-            // Only show tasks if the player's phone says they are in THIS room
-            if(p.currentRoom === roomName) {
-                const playerDiv = document.createElement('div');
-                playerDiv.className = "player-task-card";
+            if (p.coords) {
+                // Calculate distance between player and this station
+                const distance = getDistance(station.coords.lat, station.coords.lng, p.coords.lat, p.coords.lng);
                 
-                let html = `<h3>${p.name} ${p.status === 'ghost' ? '👻' : ''}</h3>`;
-                
-                // Filter this player's tasks to only show ones assigned to this room
-                const roomTasks = (p.tasks || []).filter(t => t.room === roomName);
-                
-                if(roomTasks.length > 0) {
-                    roomTasks.forEach(t => {
-                        const btnClass = t.done ? 'task-btn done-btn' : 'task-btn';
-                        const check = t.done ? '✅' : '';
-                        html += `
-                            <button class="${btnClass}" onclick="completeTask('${id}', '${t.id}')">
-                                ${t.name} ${check}
-                            </button>`;
-                    });
-                } else {
-                    html += `<p style="color:#aaa;">No tasks here.</p>`;
+                // If player is within proximity limit
+                if (distance <= PROXIMITY_LIMIT) {
+                    playersPresent = true;
+                    const playerDiv = document.createElement('div');
+                    playerDiv.className = "player-task-card";
+                    
+                    let html = `<h3>${p.name} ${p.status === 'ghost' ? '👻' : ''}</h3>`;
+                    const roomTasks = (p.tasks || []).filter(t => t.room === roomName);
+                    
+                    if (roomTasks.length > 0) {
+                        roomTasks.forEach(t => {
+                            const btnClass = t.done ? 'task-btn done-btn' : 'task-btn';
+                            const check = t.done ? '✅' : '';
+                            html += `
+                                <button class="${btnClass}" onclick="completeTask('${id}', '${t.id}')">
+                                    ${t.name} ${check}
+                                </button>`;
+                        });
+                    } else {
+                        html += `<p style="color:#aaa;">No tasks at this station.</p>`;
+                    }
+                    
+                    playerDiv.innerHTML = html;
+                    container.appendChild(playerDiv);
                 }
-                
-                playerDiv.innerHTML = html;
-                container.appendChild(playerDiv);
             }
+        }
+
+        if (!playersPresent) {
+            container.innerHTML = `<p style="color:#666; font-style:italic;">No crewmates nearby...</p>`;
         }
     });
 }
@@ -346,9 +402,7 @@ function completeTask(playerId, taskId) {
     });
 }
 
-// --- 7. CAMERA STREAMING LOGIC ---
-
-// Start local camera (runs on Camera Phone)
+// --- 9. CAMERA STREAMING ---
 async function startCameraFeed(roomName) {
     document.getElementById('camera-setup').style.display = 'none';
     document.getElementById('camera-active').style.display = 'block';
@@ -356,23 +410,17 @@ async function startCameraFeed(roomName) {
 
     try {
         const video = document.getElementById('localVideo');
-        // Request back camera
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
 
-        // Register PeerJS with a specific ID based on the room name
         const peerId = 'among-us-cam-' + roomName.replace(/\s+/g, '-').toLowerCase();
         const peer = new Peer(peerId);
 
         peer.on('open', (id) => {
-            // Tell Firebase this camera is online so the host knows to connect
             db.ref(`cameras/${roomName}`).set({ peerId: id, status: 'online' });
         });
 
-        // Answer incoming requests from the Host Computer
         peer.on('call', call => call.answer(stream));
-
-        // Cleanup on close
         window.onbeforeunload = () => db.ref(`cameras/${roomName}`).remove();
         
     } catch (err) {
@@ -381,7 +429,6 @@ async function startCameraFeed(roomName) {
     }
 }
 
-// Host connects to all cameras (runs on Host Computer)
 function initHostCameras() {
     const hostPeer = new Peer('among-us-host-computer');
     
@@ -402,7 +449,6 @@ function initHostCameras() {
             `;
             grid.appendChild(div);
 
-            // Establish connection and receive video stream
             const call = hostPeer.call(cam.peerId, null);
             if(call) {
                 call.on('stream', remoteStream => {
