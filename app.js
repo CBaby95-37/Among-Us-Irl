@@ -25,19 +25,21 @@ const TASK_POOL = [
     { name: "Empty Trash", icon: "🗑️" }, { name: "Divert Power", icon: "⚡" }
 ];
 
-const KILL_LIMIT = 2.0; // 2 meters (~6.5 feet) for kill
-const TASK_LIMIT = 3.0; // 3 meters (~10 feet) for tasks
-const STEP_LENGTH = 0.7; // Average human step length in meters
+const KILL_LIMIT = 2.0; 
+const TASK_LIMIT = 3.0; 
+let STEP_LENGTH = 0.7; // Default stride length in meters (adjustable in UI)
 
-// --- 3. DEAD RECKONING ENGINE (ACCELEROMETER + COMPASS) ---
+// --- 3. ANTI-DRIFT DEAD RECKONING ENGINE ---
 let myCurrentX = 0;
 let myCurrentY = 0;
 let currentHeading = 0;
 let isTracking = false;
 
-// Step detection threshold variables
-let lastAccelZ = 0;
+// Anti-Drift Variables
 let stepCooldown = false;
+let isTurning = false;
+let turnTimer = null;
+let lastHeading = 0;
 
 function startDeadReckoning() {
     isTracking = true;
@@ -45,11 +47,8 @@ function startDeadReckoning() {
     // Request permission for iOS 13+ devices
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
         DeviceOrientationEvent.requestPermission().then(permissionState => {
-            if (permissionState === 'granted') {
-                attachSensors();
-            } else {
-                alert("Motion sensors are required to track your physical movement!");
-            }
+            if (permissionState === 'granted') attachSensors();
+            else alert("Motion sensors required!");
         }).catch(console.error);
     } else {
         attachSensors();
@@ -57,36 +56,44 @@ function startDeadReckoning() {
 }
 
 function attachSensors() {
-    // 1. Compass / Heading
+    // 1. Compass Filter (Detects if you are currently turning around)
     window.addEventListener("deviceorientation", (event) => {
-        // Use webkitCompassHeading for iOS, alpha for Android
-        if (event.webkitCompassHeading) {
-            currentHeading = event.webkitCompassHeading;
-        } else if (event.alpha !== null) {
-            currentHeading = 360 - event.alpha;
+        let h = event.webkitCompassHeading || (event.alpha ? 360 - event.alpha : 0);
+        currentHeading = h;
+
+        // If heading changes by more than 10 degrees quickly, you are turning. 
+        // Pause step detection so phone shaking during the turn isn't counted as walking.
+        if (Math.abs(h - lastHeading) > 10) {
+            isTurning = true;
+            clearTimeout(turnTimer);
+            turnTimer = setTimeout(() => { isTurning = false; }, 600);
         }
+        lastHeading = h;
     }, true);
 
-    // 2. Accelerometer (Pedometer step detection)
+    // 2. Strict Step Detection
     window.addEventListener('devicemotion', (event) => {
-        const accelZ = event.accelerationIncludingGravity.z;
-        if (!accelZ) return;
-
-        // Simple Peak Detection for a "Step"
-        const delta = Math.abs(accelZ - lastAccelZ);
+        // Use linear acceleration (ignores gravity tilt) if available
+        let accelZ = 0;
+        if (event.acceleration && event.acceleration.z) {
+            accelZ = event.acceleration.z;
+        } else if (event.accelerationIncludingGravity) {
+            accelZ = event.accelerationIncludingGravity.z - 9.81;
+        }
         
-        // If device jerks up/down violently enough (a step)
-        if (delta > 3.5 && !stepCooldown) {
+        if (accelZ === null) return;
+
+        // Must be a forceful step (> 2.5m/s2), not on cooldown, and NOT currently turning around
+        if (Math.abs(accelZ) > 2.5 && !stepCooldown && !isTurning) {
             stepCooldown = true;
             registerStep();
             
-            // Prevent multiple rapid fires for a single step
-            setTimeout(() => { stepCooldown = false; }, 400); 
+            // Lock out step detection for 500ms (prevents double-bounces)
+            setTimeout(() => { stepCooldown = false; }, 500); 
         }
-        lastAccelZ = accelZ;
     });
 
-    // Sync position to Firebase every second so other devices can see you
+    // Sync to Firebase
     setInterval(() => {
         if(isTracking) {
             db.ref(`players/${myId}/coords`).set({
@@ -99,15 +106,16 @@ function attachSensors() {
 }
 
 function registerStep() {
-    // Convert heading from degrees to radians
+    // Update Stride Length from UI
+    const strideInput = document.getElementById('stride-length');
+    if (strideInput) STEP_LENGTH = parseFloat(strideInput.value);
+
     const headingRad = currentHeading * (Math.PI / 180);
-    
-    // Calculate X and Y distance moved based on the direction the phone is pointing
     const dx = STEP_LENGTH * Math.sin(headingRad);
     const dy = STEP_LENGTH * Math.cos(headingRad);
     
     myCurrentX += dx;
-    myCurrentY += dy; // Positive Y is "North" in this system
+    myCurrentY += dy;
     
     const radarStatus = document.getElementById('radar-status-text');
     if(radarStatus) {
@@ -115,17 +123,18 @@ function registerStep() {
     }
 }
 
-// Resets your position back to (0,0) when standing at the host
+// Reset position to (0,0)
 function calibratePosition() {
     myCurrentX = 0;
     myCurrentY = 0;
+    
+    const radarStatus = document.getElementById('radar-status-text');
+    if(radarStatus) radarStatus.innerText = `Pos: (0.0m, 0.0m) | Hdg: ${Math.round(currentHeading)}°`;
     alert("Calibrated! You are now at origin (0,0).");
 }
 
 function getPythagoreanDistance(x1, y1, x2, y2) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    return Math.sqrt((dx * dx) + (dy * dy));
+    return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
 }
 
 // --- 4. PLAYER GAMEPLAY CONTROLS ---
@@ -353,6 +362,7 @@ function monitorRoomTasks(roomName) {
         if (!playersPresent) container.innerHTML = `<p>No crewmates nearby (within ${TASK_LIMIT}m)...</p>`;
     });
 }
+
 function completeTask(pId, tId) {
     db.ref(`players/${pId}/tasks`).once('value', snap => {
         db.ref(`players/${pId}/tasks`).set((snap.val()||[]).map(t => t.id === tId ? {...t, done: true} : t));
