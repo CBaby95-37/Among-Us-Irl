@@ -15,6 +15,9 @@
 </head>
 <body>
 
+    <!-- FLOATING FULLSCREEN TOGGLE BUTTON (Global) -->
+    <button id="global-fullscreen-btn" onclick="toggleFullscreen()" style="position: fixed; top: 10px; right: 10px; z-index: 99999; background: rgba(11, 12, 16, 0.8); color: #66fcf1; border: 2px solid #45a29e; border-radius: 5px; padding: 8px 12px; font-family: monospace; font-size: 0.8rem; font-weight: bold; cursor: pointer;">📺 FULLSCREEN</button>
+
     <!-- ROLE SELECTOR -->
     <div id="role-selector-screen">
         <h1 class="glitch">AMONG US IRL</h1>
@@ -135,15 +138,49 @@
     <script>
         let globalGameState = {};
         let localTabletCoords = null;
+        let wakeLock = null;
 
         db.ref().on('value', snap => {
             globalGameState = snap.val() || {};
             handleMeetingUI(globalGameState);
         });
 
+        // --- SCREEN WAKE LOCK MANAGER ---
+        async function requestScreenWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    console.log("Screen Wake Lock is active. Device will not sleep.");
+                }
+            } catch (err) {
+                console.warn(`Screen Wake Lock failed: ${err.message}`);
+            }
+        }
+
+        // Re-request lock if player minimizes browser and comes back
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') {
+                await requestScreenWakeLock();
+            }
+        });
+
+        // --- FULLSCREEN CONTROLS ---
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    alert(`Error enabling fullscreen: ${err.message} (Try adding this page to your Home Screen)`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
         function switchView(viewId) {
             document.getElementById('role-selector-screen').style.display = 'none';
             document.getElementById(viewId).style.display = 'block';
+
+            // Click gesture is satisfied, initialize Wake Lock immediately
+            requestScreenWakeLock();
 
             if (viewId === 'host-view') initHost();
             if (viewId === 'player-view') initPlayerUI();
@@ -154,10 +191,6 @@
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
             
-            // Generate standard scannable QR Code pointing to current page URL
-            const joinUrl = window.location.origin + window.location.pathname;
-            document.getElementById('lobby-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(joinUrl)}`;
-
             // Set Host Base Coordinates (True Origin)
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(position => {
