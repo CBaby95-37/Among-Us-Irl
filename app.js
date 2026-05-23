@@ -28,6 +28,10 @@ const TASK_POOL = [
 const KILL_LIMIT = 1.524; // 5 feet
 const TASK_LIMIT = 3.0;   // 10 feet
 
+// Dynamic user GPS offsets calculated upon Calibration
+let calibrationOffsetX = 0;
+let calibrationOffsetY = 0;
+
 // --- 3. DGPS MATHEMATICS ---
 
 // Converts Latitude/Longitude to relative meters (X, Y) from the Host Computer (0,0)
@@ -46,15 +50,14 @@ function getPythagoreanDistance(x1, y1, x2, y2) {
     return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
 }
 
-// --- 4. PLAYER SENSOR WITH ACTIVE DGPS CORRECTION ---
+// --- 4. PLAYER SENSOR WITH ACTIVE DGPS & CALIBRATION OFFSET ---
 let gpsWatcherId = null;
 
 function startLocationTracking() {
-    // Listen to BOTH base coordinates and live drift corrections
     db.ref().on('value', snap => {
         const data = snap.val() || {};
         const base = data.baseCoords;
-        const drift = data.gpsDrift || { lat: 0, lng: 0 }; // Current atmospheric/indoor drift
+        const drift = data.gpsDrift || { lat: 0, lng: 0 }; 
 
         if (!base) return;
 
@@ -64,21 +67,26 @@ function startLocationTracking() {
 
         if (navigator.geolocation) {
             gpsWatcherId = navigator.geolocation.watchPosition(position => {
-                // Apply the DGPS correction factor
+                // 1. Apply active satellite drift corrections
                 const correctedLat = position.coords.latitude - drift.lat;
                 const correctedLng = position.coords.longitude - drift.lng;
 
+                // 2. Project to flat plane (meters)
                 const relativeCoords = getRelativeXY(correctedLat, correctedLng, base.lat, base.lng);
                 
+                // 3. Apply custom calibration offset (calibrationOffsetX/Y)
+                const finalCalibratedX = relativeCoords.x + calibrationOffsetX;
+                const finalCalibratedY = relativeCoords.y + calibrationOffsetY;
+
                 db.ref(`players/${myId}/coords`).set({
-                    x: relativeCoords.x,
-                    y: relativeCoords.y,
+                    x: finalCalibratedX,
+                    y: finalCalibratedY,
                     timestamp: Date.now()
                 });
 
                 const statusText = document.getElementById('radar-status-text');
                 if (statusText) {
-                    statusText.innerText = `Corrected Pos: (${relativeCoords.x.toFixed(1)}m, ${relativeCoords.y.toFixed(1)}m)`;
+                    statusText.innerText = `Calibrated Pos: (${finalCalibratedX.toFixed(1)}m, ${finalCalibratedY.toFixed(1)}m)`;
                 }
             }, err => {
                 console.error("GPS Watcher Error: ", err.message);
@@ -91,37 +99,55 @@ function startLocationTracking() {
     });
 }
 
-// Manual Beacon Calibration: Snaps player coordinates directly to the nearest active beacon/host
+// Snaps coordinates to either Host (0,0) or the nearest Tablet Station
 function calibratePosition() {
     db.ref().once('value', snap => {
         const data = snap.val() || {};
         const stations = data.stations || {};
+        const players = data.players || {};
+        const me = players[myId];
         
-        let nearestBeacon = "Host";
-        let minDist = getPythagoreanDistance(0, 0, myCurrentX, myCurrentY); // distance to host
+        if (!me || !me.coords) {
+            alert("Waiting on initial GPS coordinates before calibration is possible.");
+            return;
+        }
 
-        // Check if player is closer to a stationary tablet beacon
+        // Extract raw coordinate by removing current active calibration offsets
+        const rawX = me.coords.x - calibrationOffsetX;
+        const rawY = me.coords.y - calibrationOffsetY;
+
+        // Default: Assume nearest beacon is the Host Computer at (0,0)
+        let nearestName = "Host Computer";
+        let targetX = 0;
+        let targetY = 0;
+        let minDist = getPythagoreanDistance(0, 0, me.coords.x, me.coords.y); 
+
+        // Evaluate proximity to all placed Tablet Stations
         for (let room in stations) {
             const s = stations[room];
             if (s.coords) {
-                const dist = getPythagoreanDistance(s.coords.x, s.coords.y, myCurrentX, myCurrentY);
+                const dist = getPythagoreanDistance(s.coords.x, s.coords.y, me.coords.x, me.coords.y);
                 if (dist < minDist) {
                     minDist = dist;
-                    nearestBeacon = room;
+                    nearestName = room + " Tablet";
+                    targetX = s.coords.x;
+                    targetY = s.coords.y;
                 }
             }
         }
 
-        if (nearestBeacon === "Host") {
-            // Force reset coordinates to exactly 0,0
-            db.ref(`players/${myId}/coords`).set({ x: 0, y: 0, timestamp: Date.now() });
-            alert("Calibration Complete! Synced position directly to Host Computer (0,0).");
-        } else {
-            // Force snap coordinates to match the tablet coordinates
-            const sCoords = stations[nearestBeacon].coords;
-            db.ref(`players/${myId}/coords`).set({ x: sCoords.x, y: sCoords.y, timestamp: Date.now() });
-            alert(`Calibration Complete! Synced position directly to ${nearestBeacon} Tablet Beacon.`);
-        }
+        // Calculate offset required to snap raw coordinates exactly to the nearest target
+        calibrationOffsetX = targetX - rawX;
+        calibrationOffsetY = targetY - rawY;
+
+        // Force write to Firebase immediately
+        db.ref(`players/${myId}/coords`).set({
+            x: targetX,
+            y: targetY,
+            timestamp: Date.now()
+        });
+
+        alert(`Calibration Complete! Synced position exactly with: ${nearestName.toUpperCase()}`);
     });
 }
 
@@ -156,7 +182,9 @@ function startKillProximityCheck() {
         }
         
         const killBtn = document.getElementById('kill-btn');
-        if (killBtn) killBtn.style.display = targetNearby ? 'block' : 'none';
+        if (killBtn) {
+            killBtn.style.display = targetNearby ? 'block' : 'none';
+        }
     });
 }
 

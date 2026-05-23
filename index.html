@@ -157,7 +157,6 @@
             }
         }
 
-        // Re-request lock if player minimizes browser and comes back
         document.addEventListener('visibilitychange', async () => {
             if (wakeLock !== null && document.visibilityState === 'visible') {
                 await requestScreenWakeLock();
@@ -168,7 +167,7 @@
         function toggleFullscreen() {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(err => {
-                    alert(`Error enabling fullscreen: ${err.message} (Try adding this page to your Home Screen)`);
+                    alert(`Error enabling fullscreen: ${err.message}`);
                 });
             } else {
                 document.exitFullscreen();
@@ -179,7 +178,7 @@
             document.getElementById('role-selector-screen').style.display = 'none';
             document.getElementById(viewId).style.display = 'block';
 
-            // Click gesture is satisfied, initialize Wake Lock immediately
+            // User gesture completed, execute lock request
             requestScreenWakeLock();
 
             if (viewId === 'host-view') initHost();
@@ -191,6 +190,9 @@
         function initHost() {
             document.getElementById('host-end-vote-btn').style.display = 'block';
             
+            const joinUrl = window.location.origin + window.location.pathname;
+            document.getElementById('lobby-qr-image').src = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(joinUrl)}`;
+
             // Set Host Base Coordinates (True Origin)
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(position => {
@@ -199,12 +201,9 @@
                     
                     db.ref('baseCoords').set({ lat: baseLat, lng: baseLng });
                     
-                    // Host continues tracking its own GPS to calculate the active atmospheric drift
                     navigator.geolocation.watchPosition(livePos => {
                         const driftLat = livePos.coords.latitude - baseLat;
                         const driftLng = livePos.coords.longitude - baseLng;
-                        
-                        // Publish live drift adjustments
                         db.ref('gpsDrift').set({ lat: driftLat, lng: driftLng });
                     }, null, { enableHighAccuracy: true, maximumAge: 0 });
 
@@ -389,13 +388,18 @@
             });
         }
 
-        // --- MEETING ---
+        // --- SELECTIVE MEETING ROUTER ---
         function handleMeetingUI(data) {
             const isMeeting = data.meeting;
             const overlay = document.getElementById('meeting-overlay');
             const mainMenu = document.getElementById('role-selector-screen');
 
-            if (isMeeting && mainMenu.style.display === 'none') {
+            // Evaluate if Player Phone or Host Dashboard is active
+            const playerGameActive = document.getElementById('player-game').style.display === 'block';
+            const hostDashboardActive = document.getElementById('host-dashboard').style.display === 'block';
+
+            // Show meeting overlays ONLY to Players and the Host (by-passes Tablet devices completely)
+            if (isMeeting && mainMenu.style.display === 'none' && (playerGameActive || hostDashboardActive)) {
                 overlay.style.display = 'flex';
                 const players = data.players || {};
                 const votes = data.votes || {};
