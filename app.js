@@ -75,15 +75,75 @@ function tryKill() {
     });
 }
 
+// --- 4. MEETING & VOTING LOGIC ---
+
 function callMeeting() {
+    // Clear old votes and messages, then trigger meeting
+    db.ref('votes').remove();
+    db.ref('ejectionMessage').remove();
     db.ref('meeting').set(true);
+}
+
+function castVote(targetId) {
+    db.ref(`players/${myId}`).once('value', snap => {
+        const me = snap.val();
+        if(me && me.status === 'alive') {
+            db.ref(`votes/${myId}`).set(targetId);
+        } else {
+            alert("Ghosts cannot vote!");
+        }
+    });
+}
+
+function tallyVotes() {
+    // Host only function to calculate the winner
+    db.ref().once('value', snap => {
+        const data = snap.val();
+        const votes = data.votes || {};
+        const players = data.players || {};
+
+        let counts = {};
+        for (let voter in votes) {
+            let target = votes[voter];
+            counts[target] = (counts[target] || 0) + 1;
+        }
+
+        let maxVotes = 0;
+        let ejectedId = null;
+        let tie = false;
+
+        for (let target in counts) {
+            if (counts[target] > maxVotes) {
+                maxVotes = counts[target];
+                ejectedId = target;
+                tie = false;
+            } else if (counts[target] === maxVotes) {
+                tie = true;
+            }
+        }
+
+        let message = "";
+        if (!tie && ejectedId && ejectedId !== 'skip') {
+            message = `${players[ejectedId].name} was ejected.`;
+            // Turn them into a ghost
+            db.ref(`players/${ejectedId}/status`).set('ghost');
+        } else {
+            message = "No one was ejected (Tie or Skipped).";
+        }
+
+        // Broadcast the result to everyone
+        db.ref('ejectionMessage').set(message);
+        
+        // End the meeting
+        db.ref('meeting').set(false);
+    });
 }
 
 function endMeeting() {
     db.ref('meeting').set(false);
 }
 
-// --- 4. HOST LOGIC ---
+// --- 5. HOST LOGIC ---
 
 // Host: Listen for Player Updates (Updates Lobby Table & Dashboard)
 db.ref('players').on('value', snap => {
@@ -161,6 +221,8 @@ function startGame() {
 
         updates['gameState'] = 'playing';
         updates['meeting'] = false;
+        updates['ejectionMessage'] = null;
+        updates['votes'] = null;
         db.ref().update(updates);
     });
 }
@@ -172,11 +234,22 @@ function kickPlayer(id) {
 }
 
 function resetGame() {
-    if(confirm("Reset the entire game? All roles and tasks will be cleared.")) {
-        db.ref('/').set({ 
-            gameState: 'lobby',
-            meeting: false,
-            cameras: {}
+    if(confirm("Reset the game? Players stay in lobby, roles/tasks are cleared.")) {
+        db.ref('gameState').set('lobby');
+        db.ref('meeting').set(false);
+        db.ref('cameras').remove();
+        db.ref('votes').remove();
+        db.ref('ejectionMessage').remove();
+        
+        db.ref('players').once('value', snap => {
+            const players = snap.val();
+            if(players) {
+                for(let id in players) {
+                    db.ref(`players/${id}/status`).set('alive');
+                    db.ref(`players/${id}/role`).set('crewmate');
+                    db.ref(`players/${id}/tasks`).remove();
+                }
+            }
         });
         location.reload();
     }
@@ -219,7 +292,7 @@ function updateHostDashboard(players) {
     }
 }
 
-// --- 5. TABLET & TASK LOGIC ---
+// --- 6. TABLET & TASK LOGIC ---
 
 function monitorRoomTasks(roomName) {
     db.ref('players').on('value', snap => {
@@ -273,7 +346,7 @@ function completeTask(playerId, taskId) {
     });
 }
 
-// --- 6. CAMERA STREAMING LOGIC ---
+// --- 7. CAMERA STREAMING LOGIC ---
 
 // Start local camera (runs on Camera Phone)
 async function startCameraFeed(roomName) {

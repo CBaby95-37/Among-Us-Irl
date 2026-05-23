@@ -1,75 +1,187 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Among Us IRL - Player</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Among Us IRL - Player Phone</title>
     <link rel="stylesheet" href="style.css">
-    <!-- 1. Firebase Core -->
-<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-<!-- 2. Firebase Database -->
-<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-<!-- 3. Your Logic -->
-<script src="app.js"></script>
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 </head>
 <body>
-    <div id="setup">
-        <input type="text" id="pName" placeholder="Enter Name">
-        <button onclick="joinGame()">JOIN LOBBY</button>
+
+    <!-- 1. PLAYER SETUP SCREEN -->
+    <div id="player-setup" class="role-section">
+        <h1 class="glitch">JOIN CREW</h1>
+        <input type="text" id="playerNameInput" placeholder="Enter Your Name...">
+        <button class="menu-btn" onclick="joinGame()">JOIN LOBBY</button>
+        <p style="margin-top: 20px; color: #888;">Wait for the Host to start the game after joining.</p>
     </div>
 
-    <div id="role-reveal" class="screen">
-        <h1 id="role-display"></h1>
-    </div>
-
-    <div id="gameplay" class="screen">
-        <div id="room-selector">
-            <button onclick="changeRoom('Kitchen')">Kitchen</button>
-            <button onclick="changeRoom('Living Room')">Living Room</button>
-            <button onclick="changeRoom('Laundry')">Laundry</button>
-            <!-- Add other rooms here -->
+    <!-- 2. MAIN GAMEPLAY SCREEN -->
+    <div id="player-game" class="role-section" style="display:none;">
+        <div id="role-reveal-box">
+            <h2 id="role-text"></h2>
         </div>
+        
+        <div id="player-status-indicator"></div>
         <hr>
-        <div id="actions">
-            <button id="kill-btn" style="display:none; background:red;" onclick="tryKill()">KILL</button>
-            <button onclick="callMeeting()">REPORT / EMERGENCY</button>
+        
+        <h3>YOUR LOCATION:</h3>
+        <p style="font-size: 0.9rem; color: #888; margin-bottom: 10px;">Select the room you are currently standing in.</p>
+        <div id="room-buttons" class="room-grid"></div>
+        
+        <hr>
+        <div class="player-actions">
+            <!-- Kill button only shows if Impostor -->
+            <button id="kill-btn" class="danger-btn" style="display:none;" onclick="tryKill()">KILL</button>
+            
+            <!-- Everyone gets the Report button -->
+            <button class="report-btn" onclick="callMeeting()">🚨 REPORT / EMERGENCY</button>
         </div>
     </div>
 
-    <div id="death-screen" class="screen" style="background: black;">
-        <img src="https://media.tenor.com/7S7v-X3A2m8AAAAC/among-us-dead.gif" width="100%">
-        <h1>YOU WERE KILLED</h1>
+    <!-- 3. EMERGENCY MEETING & VOTING OVERLAY -->
+    <div id="meeting-overlay" class="meeting-overlay" style="display:none;">
+        <div class="meeting-box">
+            <h1 style="color: #ff3333; margin-bottom: 5px;">🚨 EMERGENCY MEETING 🚨</h1>
+            <p style="color: #fff;">Discuss and Vote! Ghosts cannot vote.</p>
+            
+            <div id="voting-list" class="voting-grid">
+                <!-- Players generated here by JS -->
+            </div>
+            
+            <div class="voting-actions">
+                <button id="skip-vote-btn" class="skip-btn" onclick="castVote('skip')">⏭️ SKIP VOTE</button>
+                <p id="wait-msg" style="display:none; color:#00ff00; font-weight:bold; font-size: 1.2rem;">Waiting for Host to tally votes...</p>
+            </div>
+        </div>
     </div>
 
+    <!-- Link to the shared logic file -->
     <script src="app.js"></script>
     <script>
-        function joinGame() {
-            const name = document.getElementById('pName').value;
-            db.ref('players/' + myId).set({ name: name, status: 'alive', currentRoom: 'Lobby' });
-            document.getElementById('setup').style.display = 'none';
+        // --- INITIALIZE PLAYER UI ON LOAD ---
+        window.onload = () => {
+            initPlayerUI();
+        };
+
+        function initPlayerUI() {
+            // Generate Room Buttons dynamically from app.js ROOMS array
+            const grid = document.getElementById('room-buttons');
+            grid.innerHTML = "";
+            ROOMS.forEach(room => {
+                let b = document.createElement('button');
+                b.className = "room-btn";
+                b.innerText = room;
+                b.onclick = () => {
+                    db.ref(`players/${myId}/currentRoom`).set(room);
+                    // Visually highlight the selected room
+                    document.querySelectorAll('.room-btn').forEach(btn => btn.classList.remove('active-room'));
+                    b.classList.add('active-room');
+                };
+                grid.appendChild(b);
+            });
+
+            // Listen to my own player data for Role/Status changes
+            db.ref(`players/${myId}`).on('value', snap => {
+                const data = snap.val();
+                
+                // If Host started the game and assigned a role
+                if (data && data.role) {
+                    document.getElementById('player-setup').style.display = 'none';
+                    document.getElementById('player-game').style.display = 'block';
+                    
+                    document.getElementById('role-text').innerText = "ROLE: " + data.role.toUpperCase();
+                    document.getElementById('role-text').className = data.role + "-text";
+                    document.getElementById('player-status-indicator').innerText = "STATUS: " + data.status.toUpperCase();
+                    
+                    // Show Kill button if Impostor and Alive
+                    if(data.role === 'impostor' && data.status === 'alive') {
+                        document.getElementById('kill-btn').style.display = 'block';
+                    } else {
+                        document.getElementById('kill-btn').style.display = 'none';
+                    }
+
+                    // Turn screen grayscale if killed
+                    if(data.status === 'ghost') {
+                        document.body.style.filter = "grayscale(100%)";
+                    } else {
+                        document.body.style.filter = "none";
+                    }
+                } else {
+                    // Reset to join screen if host resets the game
+                    document.getElementById('player-setup').style.display = 'block';
+                    document.getElementById('player-game').style.display = 'none';
+                    document.body.style.filter = "none";
+                }
+            });
         }
 
-        function changeRoom(room) {
-            db.ref(`players/${myId}/currentRoom`).set(room);
-        }
+        // --- VOTING SYSTEM LISTENER ---
+        db.ref().on('value', snap => {
+            const data = snap.val() || {};
+            const isMeeting = data.meeting;
+            const overlay = document.getElementById('meeting-overlay');
 
-        // Listen for role reveal
-        db.ref(`players/${myId}/role`).on('value', snap => {
-            if(snap.val()) {
-                document.getElementById('role-reveal').classList.add('active');
-                document.getElementById('role-display').innerText = snap.val().toUpperCase();
-                document.getElementById('role-display').className = snap.val() + "-text";
-                if(snap.val() === 'impostor') document.getElementById('kill-btn').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('role-reveal').classList.remove('active');
-                    document.getElementById('gameplay').classList.add('active');
-                }, 3000);
+            // 1. Show/Hide Meeting Screen (Only if game has started)
+            if (isMeeting && document.getElementById('player-game').style.display === 'block') {
+                overlay.style.display = 'flex';
+                
+                // 2. Render Players in Voting Screen
+                const players = data.players || {};
+                const votes = data.votes || {};
+                const list = document.getElementById('voting-list');
+                list.innerHTML = ""; // Clear current list
+                
+                const myVote = votes[myId];
+                const amIAlive = players[myId] && players[myId].status === 'alive';
+
+                for(let id in players) {
+                    const p = players[id];
+                    // Only show ALIVE players as vote options
+                    if (p.status === 'alive') {
+                        const hasVoted = votes[id] ? "✅ Voted" : "⏳ Thinking...";
+                        
+                        // Hide vote button if I am dead OR I already voted
+                        let btnHtml = "";
+                        if (amIAlive && !myVote) {
+                            btnHtml = `<button class="vote-action-btn" onclick="castVote('${id}')">VOTE</button>`;
+                        }
+
+                        list.innerHTML += `
+                            <div class="vote-row">
+                                <div class="vote-info">
+                                    <span class="v-name">${p.name}</span> 
+                                    <span class="v-status">${hasVoted}</span>
+                                </div>
+                                ${btnHtml}
+                            </div>
+                        `;
+                    }
+                }
+
+                // UI toggles based on if the player has voted yet
+                if (amIAlive && !myVote) {
+                    document.getElementById('skip-vote-btn').style.display = 'block';
+                    document.getElementById('wait-msg').style.display = 'none';
+                } else {
+                    document.getElementById('skip-vote-btn').style.display = 'none';
+                    document.getElementById('wait-msg').style.display = 'block';
+                }
+                
+            } else {
+                overlay.style.display = 'none';
             }
         });
 
-        db.ref(`players/${myId}/status`).on('value', snap => {
-            if(snap.val() === 'ghost') {
-                document.getElementById('gameplay').classList.add('ghost-mode');
-                document.getElementById('death-screen').classList.add('active');
-                setTimeout(() => document.getElementById('death-screen').classList.remove('active'), 4000);
+        // Listen for Ejection Results from Host
+        db.ref('ejectionMessage').on('value', snap => {
+            const msg = snap.val();
+            if (msg) {
+                alert("🗳️ RESULT: " + msg);
             }
         });
     </script>

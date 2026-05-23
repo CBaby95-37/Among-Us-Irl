@@ -408,7 +408,7 @@ th {
 }
 
 /* =========================================================
-   MEETING OVERLAY
+   MEETING & VOTING UI
 ========================================================= */
 .meeting-overlay {
     position: fixed;
@@ -426,35 +426,98 @@ th {
 
 .meeting-box {
     background: #0b0c10;
-    padding: 40px;
+    padding: 30px;
     border: 5px solid #ff3333;
     border-radius: 20px;
     box-shadow: 0 0 50px rgba(255, 0, 0, 0.8);
-    max-width: 90%;
+    width: 90%;
+    max-width: 600px;
 }
 
 .meeting-box h1 {
-    color: white;
-    font-size: 3rem;
-    margin-top: 20px;
+    font-size: 2.5rem;
+    margin-top: 10px;
 }
 
-.meeting-box p {
+.voting-grid {
+    margin: 20px 0;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: #1a1a1d;
+    border: 2px solid #45a29e;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+.vote-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #111;
+    padding: 15px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+    border-left: 5px solid #c5c6c7;
+}
+
+.vote-info {
+    text-align: left;
+}
+
+.vote-info .v-name {
     font-size: 1.2rem;
-    margin-bottom: 20px;
+    font-weight: bold;
+    color: white;
+    display: block;
 }
 
-#host-resume-btn {
-    background: #45a29e;
-    color: #0b0c10;
-    padding: 15px 30px;
+.vote-info .v-status {
+    font-size: 0.9rem;
+    color: #888;
+}
+
+.vote-action-btn {
+    background: #ff3333;
+    color: white;
+    border: 2px solid white;
+    padding: 10px 20px;
+    font-weight: bold;
+    border-radius: 5px;
+}
+
+.vote-action-btn:hover { background: #cc0000; }
+
+.voting-actions {
+    margin-top: 15px;
+}
+
+.skip-btn {
+    background: #666;
+    color: white;
+    padding: 15px;
+    width: 100%;
+    font-size: 1.2rem;
+    border-radius: 10px;
+    border: none;
+    margin-bottom: 10px;
+}
+
+.skip-btn:hover { background: #444; }
+
+.tally-btn {
+    background: #00ff00;
+    color: black;
+    padding: 20px;
+    width: 100%;
     font-size: 1.5rem;
     font-weight: bold;
-    border: none;
     border-radius: 10px;
-    width: 100%;
+    border: none;
+    animation: pulse 1.5s infinite;
 }
 
-#host-resume-btn:hover {
-    background: #66fcf1;
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.02); box-shadow: 0 0 15px #00ff00; }
+    100% { transform: scale(1); }
 }
